@@ -67,6 +67,7 @@ function App() {
     setState({ status: "loading", label: "正在扫描 Markdown 并预览切分结果..." });
     const result = await postJson<IndexPreviewResponse>("/api/index/preview", {
       root,
+      query,
       max_chars: maxChars,
       overlap_chars: 160
     });
@@ -168,7 +169,7 @@ function App() {
             </label>
           </div>
           <div className="actions">
-            <button type="button" className="secondary" onClick={previewIndex} disabled={isLoading}>预览文本切分</button>
+            <button type="button" className="secondary" onClick={previewIndex} disabled={isLoading}>预览相关切分</button>
             <button type="button" onClick={runRetrieval} disabled={isLoading}>运行检索</button>
           </div>
         </section>
@@ -203,7 +204,7 @@ function ResultPanel({ state }: { state: RunState }) {
   if (state.status === "preview") {
     return (
       <section className="panel">
-        <PanelHeader title="文本切分预览" documentCount={state.data.document_count} chunkCount={state.data.chunk_count} />
+        <PanelHeader title="相关文本切分预览" documentCount={state.data.document_count} chunkCount={state.data.chunk_count} />
         <ChunkList chunks={state.data.chunks.slice(0, 20)} />
       </section>
     );
@@ -221,7 +222,7 @@ function EmptyPanel() {
     <section className="panel empty">
       <p className="eyebrow">Ready</p>
       <h2>先扫描知识库，或直接运行一次检索。</h2>
-      <p>用 <b>预览文本切分</b> 检查 Markdown 如何被拆成 chunk，再用 <b>运行检索</b> 查看排序后的证据。</p>
+      <p>用 <b>预览相关切分</b> 检查当前问题能命中的 Markdown chunk，再用 <b>运行检索</b> 查看排序后的证据。</p>
     </section>
   );
 }
@@ -322,7 +323,7 @@ function TraceStep({ index, title, description, children }: { index: number; tit
 
 function ChunkList({ chunks, showScores = false, compact = false }: { chunks: Array<ChunkPreview | RetrievedChunk>; showScores?: boolean; compact?: boolean }) {
   if (chunks.length === 0) {
-    return <p className="muted">没有 score ≥ {MIN_DISPLAY_SCORE} 的文本块。</p>;
+    return <p className="muted">{showScores ? `没有 score ≥ ${MIN_DISPLAY_SCORE} 的文本块。` : "当前问题没有命中相关文本块。"}</p>;
   }
   return (
     <div className={compact ? "chunk-list compact" : "chunk-list"}>

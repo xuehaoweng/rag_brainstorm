@@ -26,6 +26,17 @@ def test_preview_index_returns_chunks(tmp_path: Path) -> None:
     assert response.chunks[0].heading_path == "RAG"
 
 
+def test_preview_index_filters_chunks_by_query(tmp_path: Path) -> None:
+    (tmp_path / "garden.md").write_text("# Garden\n\nTomatoes need soil and sunlight.", encoding="utf-8")
+    (tmp_path / "rag.md").write_text("# RAG\n\n混合检索 combines keyword and vector signals.", encoding="utf-8")
+
+    response = preview_index(IndexPreviewRequest(root=tmp_path, query="混合检索"))
+
+    assert response.document_count == 2
+    assert response.chunk_count == 2
+    assert [chunk.document_path for chunk in response.chunks] == ["rag.md"]
+
+
 def test_vector_search_returns_ranked_chunks(tmp_path: Path) -> None:
     (tmp_path / "python.md").write_text(
         "# Python\n\nPytest verifies retrieval behavior.",

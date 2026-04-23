@@ -28,6 +28,7 @@ app = FastAPI(title="Self RAG", lifespan=lifespan)
 
 class IndexPreviewRequest(BaseModel):
     root: Path = Field(description="Local folder containing Markdown files")
+    query: str | None = Field(default=None, description="Optional query used to preview only relevant chunks")
     max_chars: int = Field(default=1_800, ge=300, le=8_000)
     overlap_chars: int = Field(default=160, ge=0, le=1_000)
 
@@ -88,10 +89,13 @@ def health() -> dict[str, str]:
 @app.post("/api/index/preview")
 def preview_index(request: IndexPreviewRequest) -> IndexPreviewResponse:
     documents, chunks = _load_chunks(request)
+    chunk_count = len(chunks)
+    if request.query and request.query.strip():
+        chunks = KeywordRetriever().search(chunks=chunks, query=request.query, top_k=20)
 
     return IndexPreviewResponse(
         document_count=len(documents),
-        chunk_count=len(chunks),
+        chunk_count=chunk_count,
         chunks=[_chunk_preview(chunk) for chunk in chunks],
     )
 
