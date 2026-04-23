@@ -1,0 +1,26 @@
+[project]
+name = "self-rag"
+version = "0.1.0"
+description = "Personal Markdown RAG learning console"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "pydantic-settings>=2.4.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+]
+local-embedding = [
+    "sentence-transformers>=3.0.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+exclude = ["data*", "docs*", "models*", "tests*"]

@@ -1,0 +1,16 @@
+.codex
+__pycache__/
+.pytest_cache/
+*.py[cod]
+.venv/
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/node_modules/.cache/
+data/sqlite/*.db
+data/sqlite/*.db-*
+data/vector/
+models/
+self_rag.egg-info/
+*.egg-info/
+notes/
