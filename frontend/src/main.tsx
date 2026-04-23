@@ -60,6 +60,8 @@ function App() {
   const [topK, setTopK] = useState(5);
   const [maxChars, setMaxChars] = useState(1800);
   const [state, setState] = useState<RunState>({ status: "idle" });
+  const isLoading = state.status === "loading";
+  const statusLabel = state.status === "idle" ? "待运行" : state.status === "loading" ? "检索中" : state.status === "error" ? "需处理" : "已返回";
 
   async function previewIndex() {
     setState({ status: "loading", label: "正在扫描 Markdown 并预览切分结果..." });
@@ -89,61 +91,102 @@ function App() {
   }
 
   return (
-    <main className="shell">
-      <section className="hero">
-        <div>
-          <p className="eyebrow">个人 RAG 调试台</p>
-          <h1>先看清检索过程，再相信模型回答。</h1>
-          <p className="lede">
-            这是一个面向学习的知识库调试台：扫描 Markdown、观察文本切分、运行混合检索、比较分数，并查看后端真正返回的原文证据。
-          </p>
-        </div>
-        <div className="status-card">
-          <span>当前模式</span>
-          <strong>{modeLabel(mode)} · {provider === "bge-m3" ? "本地 bge-m3 向量模型" : "无依赖 hash 测试向量"}</strong>
-        </div>
-      </section>
+    <>
+      <a className="skip-link" href="#results">跳到检索结果</a>
+      <main className="shell">
+        <header className="topbar" aria-label="工作台状态">
+          <div>
+            <p className="eyebrow">Personal RAG console</p>
+            <span>Markdown evidence lab</span>
+          </div>
+          <div className="run-signal" data-state={state.status}>
+            <span aria-hidden="true" />
+            {statusLabel}
+          </div>
+        </header>
 
-      <section className="control-grid">
-        <label className="field wide">
-          <span>Markdown 根目录</span>
-          <input value={root} onChange={(event) => setRoot(event.target.value)} />
-        </label>
-        <label className="field">
-          <span>检索模式</span>
-          <select value={mode} onChange={(event) => setMode(event.target.value as RetrievalMode)}>
-            <option value="hybrid">混合检索</option>
-            <option value="keyword">关键词检索</option>
-            <option value="vector">向量检索</option>
-          </select>
-        </label>
-        <label className="field">
-          <span>向量模型</span>
-          <select value={provider} onChange={(event) => setProvider(event.target.value)}>
-            <option value="hash">hash</option>
-            <option value="bge-m3">bge-m3</option>
-          </select>
-        </label>
-        <label className="field">
-          <span>返回条数 Top K</span>
-          <input type="number" min="1" max="50" value={topK} onChange={(event) => setTopK(Number(event.target.value))} />
-        </label>
-        <label className="field">
-          <span>文本块最大字符数</span>
-          <input type="number" min="300" max="8000" value={maxChars} onChange={(event) => setMaxChars(Number(event.target.value))} />
-        </label>
-        <label className="field query">
-          <span>检索问题</span>
-          <textarea value={query} onChange={(event) => setQuery(event.target.value)} />
-        </label>
-        <div className="actions">
-          <button type="button" className="secondary" onClick={previewIndex}>预览文本切分</button>
-          <button type="button" onClick={runRetrieval}>运行检索</button>
-        </div>
-      </section>
+        <section className="hero">
+          <div className="hero-copy">
+            <p className="eyebrow">个人 RAG 调试台</p>
+            <h1>先审计证据，再相信回答。</h1>
+            <p className="lede">
+              一个面向学习和排错的知识库工作台：扫描 Markdown、观察 chunk、运行关键词/向量/混合检索，并直接核对后端返回的原文证据。
+            </p>
+            <div className="hero-metrics" aria-label="当前检索参数">
+              <Metric label="模式" value={modeLabel(mode)} />
+              <Metric label="Top K" value={topK.toString()} />
+              <Metric label="Chunk 上限" value={`${maxChars} 字`} />
+            </div>
+          </div>
+          <aside className="status-card" aria-label="当前运行配置">
+            <span>当前配置</span>
+            <strong>{modeLabel(mode)}</strong>
+            <p>{provider === "bge-m3" ? "本地 bge-m3 向量模型，适合真实语义检索。" : "hash 测试向量，无模型依赖，适合快速联调。"}</p>
+            <div className="status-path">{root}</div>
+          </aside>
+        </section>
 
-      <ResultPanel state={state} />
-    </main>
+        <section className="control-grid" aria-label="检索控制台">
+          <div className="control-intro">
+            <p className="eyebrow">Run recipe</p>
+            <h2>配置一次可复现的检索实验</h2>
+            <p>优先预览切分，再运行检索。这样可以区分“没召回”和“文档切分不合理”。</p>
+          </div>
+          <div className="field-group">
+            <label className="field wide">
+              <span>Markdown 根目录</span>
+              <input value={root} onChange={(event) => setRoot(event.target.value)} />
+            </label>
+            <label className="field query">
+              <span>检索问题</span>
+              <textarea value={query} onChange={(event) => setQuery(event.target.value)} />
+            </label>
+          </div>
+          <div className="field-group compact-fields">
+            <label className="field">
+              <span>检索模式</span>
+              <select value={mode} onChange={(event) => setMode(event.target.value as RetrievalMode)}>
+                <option value="hybrid">混合检索</option>
+                <option value="keyword">关键词检索</option>
+                <option value="vector">向量检索</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>向量模型</span>
+              <select value={provider} onChange={(event) => setProvider(event.target.value)}>
+                <option value="hash">hash</option>
+                <option value="bge-m3">bge-m3</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>返回条数 Top K</span>
+              <input type="number" min="1" max="50" value={topK} onChange={(event) => setTopK(Number(event.target.value))} />
+            </label>
+            <label className="field">
+              <span>文本块最大字符数</span>
+              <input type="number" min="300" max="8000" value={maxChars} onChange={(event) => setMaxChars(Number(event.target.value))} />
+            </label>
+          </div>
+          <div className="actions">
+            <button type="button" className="secondary" onClick={previewIndex} disabled={isLoading}>预览文本切分</button>
+            <button type="button" onClick={runRetrieval} disabled={isLoading}>运行检索</button>
+          </div>
+        </section>
+
+        <div id="results">
+          <ResultPanel state={state} />
+        </div>
+      </main>
+    </>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="metric">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
   );
 }
 
@@ -176,6 +219,7 @@ function ResultPanel({ state }: { state: RunState }) {
 function EmptyPanel() {
   return (
     <section className="panel empty">
+      <p className="eyebrow">Ready</p>
       <h2>先扫描知识库，或直接运行一次检索。</h2>
       <p>用 <b>预览文本切分</b> 检查 Markdown 如何被拆成 chunk，再用 <b>运行检索</b> 查看排序后的证据。</p>
     </section>
@@ -289,7 +333,12 @@ function ChunkList({ chunks, showScores = false, compact = false }: { chunks: Ar
               <span className="rank">{"rank" in chunk ? `第 ${chunk.rank} 名` : `文本块 ${chunk.chunk_index}`}</span>
               <h3>{chunk.heading_path || "文档"}</h3>
             </div>
-            {showScores && "score" in chunk ? <strong>{chunk.score.toFixed(4)}</strong> : null}
+            {showScores && "score" in chunk ? (
+              <div className="score" aria-label={`相似度分数 ${chunk.score.toFixed(4)}`}>
+                <strong>{chunk.score.toFixed(4)}</strong>
+                <span style={{ inlineSize: `${Math.max(4, Math.min(100, chunk.score * 100))}%` }} />
+              </div>
+            ) : null}
           </header>
           <p className="source">{chunk.document_path}:{chunk.start_line}-{chunk.end_line}</p>
           <pre>{chunk.text}</pre>
