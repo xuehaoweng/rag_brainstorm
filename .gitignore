@@ -1,4 +1,5 @@
 .codex
+.env
 __pycache__/
 .pytest_cache/
 *.py[cod]
@@ -9,6 +10,7 @@ frontend/dist/
 frontend/node_modules/.cache/
 data/sqlite/*.db
 data/sqlite/*.db-*
+data/faiss/
 data/vector/
 models/
 self_rag.egg-info/

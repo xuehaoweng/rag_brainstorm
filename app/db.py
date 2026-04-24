@@ -29,6 +29,12 @@ CREATE TABLE IF NOT EXISTS chunks (
     FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE,
     UNIQUE(document_id, chunk_index)
 );
+
+CREATE TABLE IF NOT EXISTS index_metadata (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
@@ -48,4 +54,3 @@ def init_db(database_path: Path | None = None) -> None:
 
     with connect(database_path) as connection:
         connection.executescript(SCHEMA)
-

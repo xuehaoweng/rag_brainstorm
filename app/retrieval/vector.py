@@ -15,7 +15,7 @@ class VectorRetriever:
         top_k: int,
     ) -> tuple[list[RetrievedChunk], VectorSearchDebug]:
         searchable_chunks = [chunk for chunk in chunks if _is_searchable(chunk)]
-        texts = [_embedding_text(chunk) for chunk in searchable_chunks]
+        texts = [embedding_text(chunk) for chunk in searchable_chunks]
         chunk_vectors = self.embedding_provider.embed_texts(texts) if texts else []
         query_vector = self.embedding_provider.embed_texts([query])[0]
 
@@ -47,7 +47,7 @@ class VectorRetriever:
         )
 
 
-def _embedding_text(chunk: MarkdownChunk) -> str:
+def embedding_text(chunk: MarkdownChunk) -> str:
     """Include source metadata so title-like queries can hit the right note."""
 
     return "\n".join(
@@ -61,7 +61,7 @@ def _embedding_text(chunk: MarkdownChunk) -> str:
     )
 
 
-def _is_searchable(chunk: MarkdownChunk) -> bool:
+def is_searchable(chunk: MarkdownChunk) -> bool:
     # Heading-only chunks create noisy high-similarity matches in small corpora.
     body = "\n".join(
         line
@@ -69,3 +69,7 @@ def _is_searchable(chunk: MarkdownChunk) -> bool:
         if line.strip() and not line.lstrip().startswith("#")
     )
     return len(body.strip()) >= 30
+
+
+_embedding_text = embedding_text
+_is_searchable = is_searchable

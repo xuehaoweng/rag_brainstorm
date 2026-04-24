@@ -9,10 +9,18 @@ from app.config import settings
 from app.db import init_db
 from app.documents.loader import scan_markdown_folder
 from app.documents.models import MarkdownChunk
+from app.generation.llm import create_llm_provider
+from app.generation.prompt import build_answer_prompt
 from app.indexing.embeddings import create_embedding_provider
 from app.indexing.chunker import chunk_markdown_document
+from app.indexing.persistent_index import (
+    build_persistent_index,
+    get_persistent_index_status,
+    load_persistent_chunks,
+    search_persistent_vector_index,
+)
 from app.retrieval.schemas import RetrievedChunk, VectorSearchDebug
-from app.retrieval.hybrid import HybridRetriever
+from app.retrieval.hybrid import HybridRetriever, merge_results
 from app.retrieval.keyword import KeywordRetriever
 from app.retrieval.vector import VectorRetriever
 
@@ -57,6 +65,46 @@ class VectorSearchRequest(IndexPreviewRequest):
         description="Use 'hash' for dependency-free testing or 'bge-m3' for local model embeddings",
     )
     embedding_model_path: Path | None = None
+    use_persistent_index: bool = Field(
+        default=False,
+        description="Search the previously built SQLite + FAISS index instead of scanning files on this request",
+    )
+
+
+class IndexBuildRequest(BaseModel):
+    root: Path = Field(description="Local folder containing Markdown files")
+    max_chars: int = Field(default=1_800, ge=300, le=8_000)
+    overlap_chars: int = Field(default=160, ge=0, le=1_000)
+    embedding_provider: str | None = Field(
+        default=None,
+        description="Use 'hash' for dependency-free testing or 'bge-m3' for local model embeddings",
+    )
+    embedding_model_path: Path | None = None
+
+
+class IndexBuildResponse(BaseModel):
+    document_count: int
+    chunk_count: int
+    indexed_chunk_count: int
+    provider: str
+    vector_dimensions: int
+    root: str
+    database_path: str
+    faiss_index_path: str
+    built_at: str
+
+
+class IndexStatusResponse(BaseModel):
+    exists: bool
+    document_count: int
+    chunk_count: int
+    indexed_chunk_count: int
+    provider: str | None
+    vector_dimensions: int | None
+    root: str | None
+    database_path: str
+    faiss_index_path: str
+    built_at: str | None
 
 
 class VectorSearchResponse(BaseModel):
@@ -81,6 +129,28 @@ class HybridSearchResponse(BaseModel):
     debug: VectorSearchDebug
 
 
+class CitationResponse(BaseModel):
+    source_id: int
+    document_path: str
+    heading_path: str
+    start_line: int
+    end_line: int
+
+
+class AnswerRequest(VectorSearchRequest):
+    mode: str = Field(default="hybrid", pattern="^(hybrid|vector|keyword)$")
+
+
+class AnswerResponse(BaseModel):
+    answer: str
+    citations: list[CitationResponse]
+    retrieved_chunks: list[RetrievedChunk]
+    context: str
+    mode: str
+    model: str
+    provider: str
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -100,8 +170,130 @@ def preview_index(request: IndexPreviewRequest) -> IndexPreviewResponse:
     )
 
 
+@app.post("/api/index/build")
+def build_index(request: IndexBuildRequest) -> IndexBuildResponse:
+    provider_name = request.embedding_provider or settings.embedding_provider
+    model_path = request.embedding_model_path or settings.embedding_model_path
+    try:
+        provider = create_embedding_provider(provider_name, model_path=model_path)
+        result = build_persistent_index(
+            root=request.root,
+            embedding_provider=provider,
+            max_chars=request.max_chars,
+            overlap_chars=request.overlap_chars,
+        )
+    except (FileNotFoundError, NotADirectoryError, RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return IndexBuildResponse(
+        document_count=result.document_count,
+        chunk_count=result.chunk_count,
+        indexed_chunk_count=result.indexed_chunk_count,
+        provider=result.provider,
+        vector_dimensions=result.vector_dimensions,
+        root=result.root,
+        database_path=result.database_path,
+        faiss_index_path=result.faiss_index_path,
+        built_at=result.built_at,
+    )
+
+
+@app.get("/api/index/status")
+def index_status() -> IndexStatusResponse:
+    status = get_persistent_index_status()
+    return IndexStatusResponse(
+        exists=status.exists,
+        document_count=status.document_count,
+        chunk_count=status.chunk_count,
+        indexed_chunk_count=status.indexed_chunk_count,
+        provider=status.provider,
+        vector_dimensions=status.vector_dimensions,
+        root=status.root,
+        database_path=status.database_path,
+        faiss_index_path=status.faiss_index_path,
+        built_at=status.built_at,
+    )
+
+
 @app.post("/api/retrieval/vector")
 def vector_search(request: VectorSearchRequest) -> VectorSearchResponse:
+    return _run_vector_search(request)
+
+
+@app.post("/api/retrieval/keyword")
+def keyword_search(request: VectorSearchRequest) -> KeywordSearchResponse:
+    return _run_keyword_search(request)
+
+
+@app.post("/api/retrieval/hybrid")
+def hybrid_search(request: VectorSearchRequest) -> HybridSearchResponse:
+    return _run_hybrid_search(request)
+
+
+@app.post("/api/answer")
+def answer_question(request: AnswerRequest) -> AnswerResponse:
+    retrieval = _run_retrieval(mode=request.mode, request=request)
+    prompt = build_answer_prompt(request.query, retrieval.results)
+    try:
+        provider = create_llm_provider()
+        answer = provider.generate(
+            system_prompt=prompt.system_prompt,
+            user_prompt=prompt.user_prompt,
+        )
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return AnswerResponse(
+        answer=answer,
+        citations=[
+            CitationResponse(
+                source_id=citation.source_id,
+                document_path=citation.document_path,
+                heading_path=citation.heading_path,
+                start_line=citation.start_line,
+                end_line=citation.end_line,
+            )
+            for citation in prompt.citations
+        ],
+        retrieved_chunks=retrieval.results,
+        context=prompt.context,
+        mode=request.mode,
+        model=provider.model,
+        provider=provider.name,
+    )
+
+
+def _run_retrieval(mode: str, request: VectorSearchRequest) -> VectorSearchResponse | KeywordSearchResponse | HybridSearchResponse:
+    if mode == "vector":
+        return _run_vector_search(request)
+    if mode == "keyword":
+        return _run_keyword_search(request)
+    if mode == "hybrid":
+        return _run_hybrid_search(request)
+    raise ValueError(f"Unsupported retrieval mode: {mode}")
+
+
+def _run_vector_search(request: VectorSearchRequest) -> VectorSearchResponse:
+    if request.use_persistent_index:
+        provider_name = request.embedding_provider or settings.embedding_provider
+        model_path = request.embedding_model_path or settings.embedding_model_path
+        try:
+            provider = create_embedding_provider(provider_name, model_path=model_path)
+            persistent_result = search_persistent_vector_index(
+                query=request.query,
+                top_k=request.top_k,
+                embedding_provider=provider,
+            )
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        return VectorSearchResponse(
+            document_count=persistent_result.document_count,
+            chunk_count=persistent_result.chunk_count,
+            results=persistent_result.results,
+            debug=persistent_result.debug,
+        )
+
     documents, chunks = _load_chunks(request)
     provider_name = request.embedding_provider or settings.embedding_provider
     model_path = request.embedding_model_path or settings.embedding_model_path
@@ -124,8 +316,22 @@ def vector_search(request: VectorSearchRequest) -> VectorSearchResponse:
     )
 
 
-@app.post("/api/retrieval/keyword")
-def keyword_search(request: VectorSearchRequest) -> KeywordSearchResponse:
+def _run_keyword_search(request: VectorSearchRequest) -> KeywordSearchResponse:
+    if request.use_persistent_index:
+        status = get_persistent_index_status()
+        chunks = load_persistent_chunks()
+        if not chunks:
+            raise HTTPException(status_code=400, detail="Persistent index does not contain chunks. Build it first.")
+        try:
+            results = KeywordRetriever().search(chunks=chunks, query=request.query, top_k=request.top_k)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return KeywordSearchResponse(
+            document_count=status.document_count,
+            chunk_count=status.chunk_count,
+            results=results,
+        )
+
     documents, chunks = _load_chunks(request)
     try:
         results = KeywordRetriever().search(chunks=chunks, query=request.query, top_k=request.top_k)
@@ -138,8 +344,41 @@ def keyword_search(request: VectorSearchRequest) -> KeywordSearchResponse:
     )
 
 
-@app.post("/api/retrieval/hybrid")
-def hybrid_search(request: VectorSearchRequest) -> HybridSearchResponse:
+def _run_hybrid_search(request: VectorSearchRequest) -> HybridSearchResponse:
+    if request.use_persistent_index:
+        provider_name = request.embedding_provider or settings.embedding_provider
+        model_path = request.embedding_model_path or settings.embedding_model_path
+        try:
+            provider = create_embedding_provider(provider_name, model_path=model_path)
+            vector_result = search_persistent_vector_index(
+                query=request.query,
+                top_k=max(request.top_k * 4, 20),
+                embedding_provider=provider,
+            )
+            chunks = load_persistent_chunks()
+            keyword_results = KeywordRetriever().search(
+                chunks=chunks,
+                query=request.query,
+                top_k=max(request.top_k * 4, 20),
+            )
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        vector_results = vector_result.results
+        results = merge_results(
+            vector_results=vector_results,
+            keyword_results=keyword_results,
+            top_k=request.top_k,
+        )
+        return HybridSearchResponse(
+            document_count=vector_result.document_count,
+            chunk_count=vector_result.chunk_count,
+            results=results,
+            vector_results=vector_results[: request.top_k],
+            keyword_results=keyword_results[: request.top_k],
+            debug=vector_result.debug,
+        )
+
     documents, chunks = _load_chunks(request)
     provider_name = request.embedding_provider or settings.embedding_provider
     model_path = request.embedding_model_path or settings.embedding_model_path

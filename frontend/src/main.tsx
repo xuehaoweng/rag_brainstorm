@@ -36,11 +36,42 @@ type VectorSearchResponse = {
   keyword_results?: RetrievedChunk[];
 };
 
+type IndexBuildResponse = {
+  document_count: number;
+  chunk_count: number;
+  indexed_chunk_count: number;
+  provider: string;
+  vector_dimensions: number;
+  root: string;
+  database_path: string;
+  faiss_index_path: string;
+  built_at: string;
+};
+
+type Citation = {
+  source_id: number;
+  document_path: string;
+  heading_path: string;
+  start_line: number;
+  end_line: number;
+};
+
+type AnswerResponse = {
+  answer: string;
+  citations: Citation[];
+  retrieved_chunks: RetrievedChunk[];
+  context: string;
+  mode: RetrievalMode;
+  model: string;
+  provider: string;
+};
+
 type RetrievalMode = "hybrid" | "vector" | "keyword";
 type RetrievalRun = {
   mode: RetrievalMode;
   query: string;
   root: string;
+  usePersistentIndex: boolean;
 };
 
 const MIN_DISPLAY_SCORE = 0.5;
@@ -50,7 +81,9 @@ type RunState =
   | { status: "loading"; label: string }
   | { status: "error"; message: string }
   | { status: "preview"; data: IndexPreviewResponse }
-  | { status: "vector"; data: VectorSearchResponse; run: RetrievalRun };
+  | { status: "build"; data: IndexBuildResponse }
+  | { status: "vector"; data: VectorSearchResponse; run: RetrievalRun }
+  | { status: "answer"; data: AnswerResponse; run: RetrievalRun };
 
 function App() {
   const [root, setRoot] = useState("/root/self_rag");
@@ -59,6 +92,7 @@ function App() {
   const [mode, setMode] = useState<RetrievalMode>("hybrid");
   const [topK, setTopK] = useState(5);
   const [maxChars, setMaxChars] = useState(1800);
+  const [usePersistentIndex, setUsePersistentIndex] = useState(true);
   const [state, setState] = useState<RunState>({ status: "idle" });
   const isLoading = state.status === "loading";
   const statusLabel = state.status === "idle" ? "待运行" : state.status === "loading" ? "检索中" : state.status === "error" ? "需处理" : "已返回";
@@ -74,6 +108,17 @@ function App() {
     setState(result.ok ? { status: "preview", data: result.data } : { status: "error", message: result.error });
   }
 
+  async function buildIndex() {
+    setState({ status: "loading", label: "正在全量构建 SQLite + FAISS 持久化索引..." });
+    const result = await postJson<IndexBuildResponse>("/api/index/build", {
+      root,
+      max_chars: maxChars,
+      overlap_chars: 160,
+      embedding_provider: provider
+    });
+    setState(result.ok ? { status: "build", data: result.data } : { status: "error", message: result.error });
+  }
+
   async function runRetrieval() {
     const needsEmbedding = mode !== "keyword";
     setState({
@@ -86,9 +131,25 @@ function App() {
       top_k: topK,
       max_chars: maxChars,
       overlap_chars: 160,
-      embedding_provider: provider
+      embedding_provider: provider,
+      use_persistent_index: usePersistentIndex
     });
-    setState(result.ok ? { status: "vector", data: result.data, run: { mode, query, root } } : { status: "error", message: result.error });
+    setState(result.ok ? { status: "vector", data: result.data, run: { mode, query, root, usePersistentIndex } } : { status: "error", message: result.error });
+  }
+
+  async function generateAnswer() {
+    setState({ status: "loading", label: "正在检索证据并调用大模型生成带引用的回答..." });
+    const result = await postJson<AnswerResponse>("/api/answer", {
+      root,
+      query,
+      mode,
+      top_k: topK,
+      max_chars: maxChars,
+      overlap_chars: 160,
+      embedding_provider: provider,
+      use_persistent_index: usePersistentIndex
+    });
+    setState(result.ok ? { status: "answer", data: result.data, run: { mode, query, root, usePersistentIndex } } : { status: "error", message: result.error });
   }
 
   return (
@@ -167,10 +228,21 @@ function App() {
               <span>文本块最大字符数</span>
               <input type="number" min="300" max="8000" value={maxChars} onChange={(event) => setMaxChars(Number(event.target.value))} />
             </label>
+            <div className="field checkbox-field">
+              <span>索引来源</span>
+              <label>
+                <input type="checkbox" checked={usePersistentIndex} onChange={(event) => setUsePersistentIndex(event.target.checked)} />
+                使用 SQLite + FAISS 持久化索引
+              </label>
+            </div>
           </div>
           <div className="actions">
             <button type="button" className="secondary" onClick={previewIndex} disabled={isLoading}>预览相关切分</button>
+            <button type="button" className="secondary strong" onClick={buildIndex} disabled={isLoading}>构建持久化索引</button>
+            <button type="button" className="ghost" disabled title="下一阶段：只处理新增、修改和删除的 Markdown 文件">增量刷新（预留）</button>
+            <button type="button" className="ghost" disabled title="下一阶段：后台定时 refresh 索引">定时索引（预留）</button>
             <button type="button" onClick={runRetrieval} disabled={isLoading}>运行检索</button>
+            <button type="button" className="answer-button" onClick={generateAnswer} disabled={isLoading}>生成回答</button>
           </div>
         </section>
 
@@ -201,11 +273,27 @@ function ResultPanel({ state }: { state: RunState }) {
   if (state.status === "error") {
     return <section className="panel error"><h2>请求失败</h2><pre>{state.message}</pre></section>;
   }
-  if (state.status === "preview") {
+	  if (state.status === "preview") {
     return (
       <section className="panel">
         <PanelHeader title="相关文本切分预览" documentCount={state.data.document_count} chunkCount={state.data.chunk_count} />
         <ChunkList chunks={state.data.chunks.slice(0, 20)} />
+      </section>
+    );
+	  }
+	  if (state.status === "build") {
+	    return (
+	      <section className="panel">
+	        <PanelHeader title="持久化索引已构建" documentCount={state.data.document_count} chunkCount={state.data.chunk_count} />
+	        <IndexBuildSummary data={state.data} />
+	      </section>
+	    );
+	  }
+  if (state.status === "answer") {
+    return (
+      <section className="panel">
+        <PanelHeader title="RAG 回答" documentCount={state.data.citations.length} chunkCount={state.data.retrieved_chunks.length} />
+        <AnswerPanel data={state.data} run={state.run} />
       </section>
     );
   }
@@ -221,11 +309,11 @@ function EmptyPanel() {
   return (
     <section className="panel empty">
       <p className="eyebrow">Ready</p>
-      <h2>先扫描知识库，或直接运行一次检索。</h2>
-      <p>用 <b>预览相关切分</b> 检查当前问题能命中的 Markdown chunk，再用 <b>运行检索</b> 查看排序后的证据。</p>
-    </section>
-  );
-}
+	      <h2>先构建索引，或切回在线模式直接检索。</h2>
+	      <p>用 <b>构建持久化索引</b> 写入 SQLite + FAISS；后续每次检索只向量化问题并查询现有索引。</p>
+	    </section>
+	  );
+	}
 
 function modeLabel(mode: RetrievalMode) {
   if (mode === "hybrid") {
@@ -255,13 +343,14 @@ function RetrievalTrace({ data, run }: { data: VectorSearchResponse; run: Retrie
       <TraceStep
         index={1}
         title="输入与切分"
-        description="后端先扫描 Markdown 根目录，按标题、段落和代码块切分为可检索文本块。"
-      >
-        <div className="debug-strip">
-          <span>检索模式：<b>{modeLabel(run.mode)}</b></span>
-          <span>问题：<b>{run.query}</b></span>
-          <span>目录：<b>{run.root}</b></span>
-        </div>
+	        description="后端先扫描 Markdown 根目录，按标题、段落和代码块切分为可检索文本块。"
+	      >
+	        <div className="debug-strip">
+	          <span>检索模式：<b>{modeLabel(run.mode)}</b></span>
+	          <span>索引来源：<b>{run.usePersistentIndex ? "SQLite + FAISS" : "按请求实时扫描"}</b></span>
+	          <span>问题：<b>{run.query}</b></span>
+	          <span>目录：<b>{run.root}</b></span>
+	        </div>
       </TraceStep>
 
       {data.keyword_results ? (
@@ -298,6 +387,90 @@ function RetrievalTrace({ data, run }: { data: VectorSearchResponse; run: Retrie
       >
         <ChunkList chunks={filterDisplayScores(data.results)} showScores />
       </TraceStep>
+    </div>
+  );
+}
+
+function IndexBuildSummary({ data }: { data: IndexBuildResponse }) {
+  return (
+    <div className="index-summary">
+      <Metric label="向量模型" value={data.provider} />
+      <Metric label="入库向量" value={data.indexed_chunk_count.toString()} />
+      <Metric label="向量维度" value={data.vector_dimensions.toString()} />
+      <div className="index-paths">
+        <p><span>Markdown root</span>{data.root}</p>
+        <p><span>SQLite</span>{data.database_path}</p>
+        <p><span>FAISS</span>{data.faiss_index_path}</p>
+        <p><span>构建时间</span>{data.built_at}</p>
+      </div>
+    </div>
+  );
+}
+
+function AnswerPanel({ data, run }: { data: AnswerResponse; run: RetrievalRun }) {
+  return (
+    <div className="answer-grid">
+      <section className="answer-card">
+        <p className="eyebrow">Grounded answer</p>
+        <div className="debug-strip">
+          <span>模型：<b>{data.model}</b></span>
+          <span>模式：<b>{modeLabel(data.mode)}</b></span>
+          <span>索引来源：<b>{run.usePersistentIndex ? "SQLite + FAISS" : "按请求实时扫描"}</b></span>
+        </div>
+        <div className="answer-text">{data.answer}</div>
+      </section>
+
+      <section className="trace-step">
+        <header>
+          <span>1</span>
+          <div>
+            <h3>引用来源</h3>
+            <p>这些来源是发送给模型的检索证据，回答里应使用对应的 [来源编号]。</p>
+          </div>
+        </header>
+        <CitationList citations={data.citations} />
+      </section>
+
+      <section className="trace-step">
+        <header>
+          <span>2</span>
+          <div>
+            <h3>检索证据</h3>
+            <p>模型回答前实际召回的 chunk，用来核对答案是否有依据。</p>
+          </div>
+        </header>
+        <ChunkList chunks={data.retrieved_chunks} showScores />
+      </section>
+
+      <section className="trace-step">
+        <header>
+          <span>3</span>
+          <div>
+            <h3>LLM 上下文</h3>
+            <p>后端拼给模型的资料上下文，方便调试引用和证据质量。</p>
+          </div>
+        </header>
+        <pre>{data.context || "没有检索到可用资料。"}</pre>
+      </section>
+    </div>
+  );
+}
+
+function CitationList({ citations }: { citations: Citation[] }) {
+  if (citations.length === 0) {
+    return <p className="muted">没有可引用来源。</p>;
+  }
+  return (
+    <div className="citation-list">
+      {citations.map((citation) => (
+        <article className="citation" key={citation.source_id}>
+          <span>[{citation.source_id}]</span>
+          <div>
+            <strong>{citation.document_path}:{citation.start_line}-{citation.end_line}</strong>
+            <p>{citation.heading_path || "文档"}</p>
+          </div>
+        </article>
+      ))}
     </div>
   );
 }
