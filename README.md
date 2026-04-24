@@ -71,7 +71,7 @@ SELF_RAG_LLM_MODEL=doubao-seed-2-0-code-preview-260215
 SELF_RAG_LLM_API_KEY=your-local-api-key
 ```
 
-不要提交真实 API key。项目已在 `.gitignore` 中忽略 `.env`。
+`SELF_RAG_LLM_API_KEY` 只在本地运行时读取；如果不配置，检索和索引功能仍可正常使用，但“生成回答”不可用。
 
 ### 4. 启动开发服务
 
@@ -319,8 +319,8 @@ cd frontend && npm run build
 - 评测集：记录问题、期望来源和命中率，避免调参只靠感觉。
 - 更多数据源：PDF、网页、代码仓库等。
 
-## 安全说明
+## 本地数据
 
-- 不要提交 `.env`。
-- 不要把真实 API key 写入 README、测试或源码。
-- 本地索引数据位于 `data/sqlite/` 和 `data/faiss/`，默认不会提交。
+- SQLite 数据默认写入 `data/sqlite/self_rag.db`。
+- FAISS 索引默认写入 `data/faiss/self_rag.index`。
+- 这些文件是本地运行产物，可以删除后重新构建索引。
