@@ -10,6 +10,7 @@ from app.db import init_db
 from app.documents.loader import scan_markdown_folder
 from app.documents.models import MarkdownChunk
 from app.generation.llm import create_llm_provider
+from app.generation.guards import EMPTY_EVIDENCE_ANSWER, validate_answer
 from app.generation.prompt import build_answer_prompt
 from app.indexing.embeddings import create_embedding_provider
 from app.indexing.chunker import chunk_markdown_document
@@ -234,14 +235,27 @@ def hybrid_search(request: VectorSearchRequest) -> HybridSearchResponse:
 def answer_question(request: AnswerRequest) -> AnswerResponse:
     retrieval = _run_retrieval(mode=request.mode, request=request)
     prompt = build_answer_prompt(request.query, retrieval.results)
+    if not retrieval.results:
+        return AnswerResponse(
+            answer=EMPTY_EVIDENCE_ANSWER,
+            citations=[],
+            retrieved_chunks=[],
+            context=prompt.context,
+            mode=request.mode,
+            model="not-called",
+            provider="not-called",
+        )
+
     try:
         provider = create_llm_provider()
-        answer = provider.generate(
+        generated_answer = provider.generate(
             system_prompt=prompt.system_prompt,
             user_prompt=prompt.user_prompt,
         )
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    answer, _ = validate_answer(generated_answer, prompt.citations)
 
     return AnswerResponse(
         answer=answer,
