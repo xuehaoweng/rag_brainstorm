@@ -1,0 +1,26 @@
+{
+  "name": "rag-basics",
+  "cases": [
+    {
+      "query": "RAG 是什么？",
+      "expected_sources": [
+        {"document_path": "rag.md", "heading_path": "RAG"}
+      ],
+      "expected_answer_contains": ["检索", "生成"]
+    },
+    {
+      "query": "怎么对 RAG 做评估？",
+      "expected_sources": [
+        {"document_path": "rag.md", "heading_path": "评估"}
+      ],
+      "expected_answer_contains": ["评估"]
+    },
+    {
+      "query": "向量检索的原理",
+      "expected_sources": [
+        {"document_path": "rag.md", "heading_path": "向量"}
+      ],
+      "expected_answer_contains": ["向量", "相似"]
+    }
+  ]
+}

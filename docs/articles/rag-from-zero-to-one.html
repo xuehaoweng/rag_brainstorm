@@ -1,0 +1,1004 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>从 0 到 1 学 RAG | Self RAG 项目导览</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f6f1e8;
+        --paper: #fffaf0;
+        --paper-2: #edf5f2;
+        --ink: #1f2328;
+        --muted: #5f6872;
+        --line: #d9d1c3;
+        --accent: #b9472f;
+        --accent-2: #126a65;
+        --accent-3: #d3972d;
+        --code-bg: #171b20;
+        --code-ink: #eef3f1;
+        --radius: 8px;
+        --shadow: 0 18px 42px rgb(40 31 19 / 10%);
+        --font: "Avenir Next", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+        --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        min-width: 320px;
+        background:
+          linear-gradient(rgb(31 35 40 / 4%) 1px, transparent 1px),
+          linear-gradient(90deg, rgb(31 35 40 / 4%) 1px, transparent 1px),
+          var(--bg);
+        background-size: 32px 32px;
+        color: var(--ink);
+        font-family: var(--font);
+        line-height: 1.65;
+      }
+
+      a {
+        color: inherit;
+      }
+
+      .skip-link {
+        position: fixed;
+        left: 16px;
+        top: 16px;
+        z-index: 10;
+        padding: 8px 12px;
+        background: var(--ink);
+        color: #fff;
+        text-decoration: none;
+        transform: translateY(-180%);
+      }
+
+      .skip-link:focus {
+        transform: translateY(0);
+      }
+
+      .shell {
+        width: min(1180px, calc(100% - 32px));
+        margin: 0 auto;
+      }
+
+      .topbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+        padding: 22px 0;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-weight: 800;
+      }
+
+      .brand-mark {
+        display: grid;
+        place-items: center;
+        width: 38px;
+        height: 38px;
+        border: 2px solid var(--ink);
+        background: var(--accent-3);
+        font-family: var(--mono);
+      }
+
+      .nav {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 8px;
+      }
+
+      .nav a {
+        border: 1px solid var(--line);
+        background: rgb(255 250 240 / 80%);
+        padding: 7px 10px;
+        font-size: 0.9rem;
+        text-decoration: none;
+      }
+
+      .nav a:focus,
+      button:focus {
+        outline: 3px solid rgb(18 106 101 / 32%);
+        outline-offset: 2px;
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+        gap: 24px;
+        align-items: stretch;
+        padding: 28px 0 36px;
+      }
+
+      .hero-copy {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        min-height: 520px;
+        border: 1px solid var(--line);
+        background: var(--paper);
+        box-shadow: var(--shadow);
+        padding: clamp(28px, 5vw, 56px);
+      }
+
+      .eyebrow {
+        margin: 0 0 12px;
+        color: var(--accent);
+        font-size: 0.78rem;
+        font-weight: 900;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2,
+      h3 {
+        margin: 0;
+        line-height: 1.08;
+      }
+
+      h1 {
+        max-width: 820px;
+        font-size: clamp(2.8rem, 8vw, 6.8rem);
+        letter-spacing: 0;
+      }
+
+      .lede {
+        max-width: 760px;
+        margin: 24px 0 0;
+        color: var(--muted);
+        font-size: clamp(1.05rem, 1.6vw, 1.3rem);
+      }
+
+      .hero-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 30px;
+      }
+
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 42px;
+        border: 1px solid var(--ink);
+        background: var(--ink);
+        color: #fff;
+        padding: 9px 14px;
+        font-weight: 800;
+        text-decoration: none;
+      }
+
+      .button.secondary {
+        background: transparent;
+        color: var(--ink);
+      }
+
+      .pipeline-visual {
+        display: grid;
+        gap: 12px;
+        border: 1px solid var(--line);
+        background: #eaf3f0;
+        box-shadow: var(--shadow);
+        padding: 18px;
+      }
+
+      .pipeline-node {
+        position: relative;
+        border: 1px solid rgb(18 106 101 / 28%);
+        background: rgb(255 255 255 / 74%);
+        padding: 13px;
+      }
+
+      .pipeline-node:not(:last-child)::after {
+        position: absolute;
+        left: 28px;
+        bottom: -15px;
+        width: 2px;
+        height: 15px;
+        background: var(--accent-2);
+        content: "";
+      }
+
+      .pipeline-node strong {
+        display: block;
+        font-size: 1rem;
+      }
+
+      .pipeline-node span {
+        display: block;
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      main {
+        padding-bottom: 64px;
+      }
+
+      section {
+        scroll-margin-top: 24px;
+      }
+
+      .section {
+        margin-top: 34px;
+        border-top: 2px solid var(--ink);
+        padding-top: 24px;
+      }
+
+      .section-head {
+        display: grid;
+        grid-template-columns: minmax(220px, 0.32fr) minmax(0, 0.68fr);
+        gap: 24px;
+        margin-bottom: 18px;
+      }
+
+      .section-head h2 {
+        font-size: clamp(1.8rem, 3.6vw, 3.2rem);
+      }
+
+      .section-head p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 1.06rem;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .card {
+        border: 1px solid var(--line);
+        background: var(--paper);
+        padding: 18px;
+      }
+
+      .card h3 {
+        font-size: 1.08rem;
+      }
+
+      .card p {
+        margin: 10px 0 0;
+        color: var(--muted);
+      }
+
+      .tag {
+        display: inline-flex;
+        margin-bottom: 12px;
+        border: 1px solid rgb(185 71 47 / 34%);
+        background: rgb(185 71 47 / 9%);
+        color: var(--accent);
+        padding: 3px 8px;
+        font-family: var(--mono);
+        font-size: 0.78rem;
+        font-weight: 800;
+      }
+
+      .concept-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 0.8fr) minmax(340px, 1.2fr);
+        gap: 16px;
+      }
+
+      .definition {
+        border-left: 6px solid var(--accent);
+        background: var(--paper);
+        padding: 22px;
+        font-size: 1.28rem;
+        font-weight: 850;
+      }
+
+      .definition small {
+        display: block;
+        margin-top: 12px;
+        color: var(--muted);
+        font-size: 0.96rem;
+        font-weight: 500;
+      }
+
+      .flow {
+        display: grid;
+        grid-template-columns: repeat(7, minmax(96px, 1fr));
+        gap: 8px;
+        overflow-x: auto;
+        padding-bottom: 4px;
+      }
+
+      .flow-step {
+        min-height: 128px;
+        border: 1px solid var(--line);
+        background: var(--paper-2);
+        padding: 12px;
+      }
+
+      .flow-step b {
+        display: block;
+        margin-bottom: 8px;
+        color: var(--accent-2);
+        font-family: var(--mono);
+      }
+
+      .flow-step span {
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      .map {
+        display: grid;
+        grid-template-columns: minmax(0, 0.44fr) minmax(0, 0.56fr);
+        gap: 16px;
+      }
+
+      .file-list {
+        display: grid;
+        gap: 8px;
+      }
+
+      .file-button {
+        width: 100%;
+        border: 1px solid var(--line);
+        background: var(--paper);
+        color: var(--ink);
+        cursor: pointer;
+        padding: 12px;
+        text-align: left;
+      }
+
+      .file-button[aria-selected="true"] {
+        border-color: var(--accent-2);
+        background: #dcefe9;
+      }
+
+      .file-button code {
+        font-family: var(--mono);
+        font-size: 0.86rem;
+      }
+
+      .detail {
+        min-height: 410px;
+        border: 1px solid var(--line);
+        background: var(--code-bg);
+        color: var(--code-ink);
+        padding: 20px;
+      }
+
+      .detail h3 {
+        color: #ffffff;
+        font-size: 1.45rem;
+      }
+
+      .detail p {
+        color: #cbd6d2;
+      }
+
+      .detail code,
+      pre {
+        font-family: var(--mono);
+      }
+
+      pre {
+        overflow-x: auto;
+        margin: 14px 0 0;
+        border: 1px solid rgb(238 243 241 / 16%);
+        background: rgb(255 255 255 / 6%);
+        padding: 14px;
+        color: #e8f5ef;
+      }
+
+      .compare {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .compare .card {
+        min-height: 240px;
+      }
+
+      .glossary {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .term {
+        border: 1px solid var(--line);
+        background: var(--paper);
+        padding: 15px;
+      }
+
+      .term dt {
+        margin: 0 0 8px;
+        color: var(--accent-2);
+        font-family: var(--mono);
+        font-size: 0.92rem;
+        font-weight: 900;
+      }
+
+      .term dd {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.94rem;
+      }
+
+      .term-wide {
+        grid-column: span 2;
+        background: #fff4dd;
+      }
+
+      .path {
+        display: grid;
+        gap: 10px;
+        counter-reset: lesson;
+      }
+
+      .lesson {
+        display: grid;
+        grid-template-columns: 54px minmax(0, 1fr);
+        gap: 14px;
+        border: 1px solid var(--line);
+        background: var(--paper);
+        padding: 16px;
+      }
+
+      .lesson::before {
+        display: grid;
+        place-items: center;
+        width: 42px;
+        height: 42px;
+        background: var(--accent-3);
+        color: var(--ink);
+        content: counter(lesson);
+        counter-increment: lesson;
+        font-family: var(--mono);
+        font-weight: 900;
+      }
+
+      .lesson h3 {
+        font-size: 1.08rem;
+      }
+
+      .lesson p {
+        margin: 6px 0 0;
+        color: var(--muted);
+      }
+
+      .checklist {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .checklist li {
+        border: 1px solid var(--line);
+        background: var(--paper);
+        padding: 14px 14px 14px 42px;
+        position: relative;
+      }
+
+      .checklist li::before {
+        position: absolute;
+        left: 14px;
+        top: 15px;
+        color: var(--accent-2);
+        content: "✓";
+        font-weight: 900;
+      }
+
+      .footer {
+        margin-top: 42px;
+        border-top: 1px solid var(--line);
+        padding: 24px 0;
+        color: var(--muted);
+        font-size: 0.95rem;
+      }
+
+      @media (max-width: 900px) {
+        .topbar,
+        .section-head,
+        .hero,
+        .concept-grid,
+        .map {
+          grid-template-columns: 1fr;
+        }
+
+        .topbar {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        .nav {
+          justify-content: flex-start;
+        }
+
+        .hero-copy {
+          min-height: auto;
+        }
+
+        .grid,
+        .compare,
+        .glossary,
+        .checklist {
+          grid-template-columns: 1fr;
+        }
+
+        .term-wide {
+          grid-column: auto;
+        }
+      }
+
+      @media (max-width: 560px) {
+        .shell {
+          width: min(100% - 20px, 1180px);
+        }
+
+        .hero-copy,
+        .pipeline-visual,
+        .card,
+        .detail,
+        .lesson {
+          padding: 14px;
+        }
+
+        .lesson {
+          grid-template-columns: 1fr;
+        }
+
+        h1 {
+          font-size: clamp(2.4rem, 16vw, 3.5rem);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          scroll-behavior: auto;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">跳到正文</a>
+    <header class="shell topbar">
+      <div class="brand" aria-label="Self RAG">
+        <span class="brand-mark">R</span>
+        <span>Self RAG Learning Lab</span>
+      </div>
+      <nav class="nav" aria-label="页面导航">
+        <a href="#learn">能学什么</a>
+        <a href="#principle">RAG 原理</a>
+        <a href="#keywords">关键词</a>
+        <a href="#source-map">源码导览</a>
+        <a href="#route">学习路线</a>
+      </nav>
+    </header>
+
+    <main id="main" class="shell">
+      <section class="hero" aria-labelledby="title">
+        <div class="hero-copy">
+          <p class="eyebrow">From zero to one</p>
+          <h1 id="title">用当前项目学懂 RAG。</h1>
+          <p class="lede">
+            这个项目不是把 RAG 封装成黑盒，而是把“资料怎么进来、怎么切、怎么变成向量、怎么检索、怎么带引用回答”摊开给你看。
+          </p>
+          <div class="hero-actions">
+            <a class="button" href="#source-map">看源码对应关系</a>
+            <a class="button secondary" href="#route">按路线学习</a>
+          </div>
+        </div>
+
+        <aside class="pipeline-visual" aria-label="RAG 证据链流程">
+          <div class="pipeline-node">
+            <strong>1. Markdown 知识库</strong>
+            <span>本地资料是系统能回答的边界。</span>
+          </div>
+          <div class="pipeline-node">
+            <strong>2. Chunk 切分</strong>
+            <span>把长文档变成可检索的证据块。</span>
+          </div>
+          <div class="pipeline-node">
+            <strong>3. Embedding + 索引</strong>
+            <span>把文本转成向量，存入 SQLite + FAISS。</span>
+          </div>
+          <div class="pipeline-node">
+            <strong>4. Hybrid Retrieval</strong>
+            <span>关键词抓精确项，向量抓语义项。</span>
+          </div>
+          <div class="pipeline-node">
+            <strong>5. Grounded Answer</strong>
+            <span>只基于证据回答，并标注来源。</span>
+          </div>
+        </aside>
+      </section>
+
+      <section id="learn" class="section" aria-labelledby="learn-title">
+        <div class="section-head">
+          <h2 id="learn-title">当前项目能学到什么</h2>
+          <p>
+            它覆盖了一个最小但完整的本地 RAG 系统。你能看到每一步的输入、输出和失败点，所以很适合从 0 到 1 理解 RAG。
+          </p>
+        </div>
+        <div class="grid">
+          <article class="card">
+            <span class="tag">Ingestion</span>
+            <h3>文档加载</h3>
+            <p>递归扫描 Markdown，记录路径、哈希、修改时间和大小。你会理解知识库边界为什么重要。</p>
+          </article>
+          <article class="card">
+            <span class="tag">Chunking</span>
+            <h3>结构化切分</h3>
+            <p>按标题、段落和代码块切分，并保留标题路径与行号。你会看到 chunk 太大或太碎的影响。</p>
+          </article>
+          <article class="card">
+            <span class="tag">Embedding</span>
+            <h3>语义向量</h3>
+            <p>支持 hash 演示和 bge-m3 真实语义模型。你会理解“语义相近”如何变成向量相近。</p>
+          </article>
+          <article class="card">
+            <span class="tag">Index</span>
+            <h3>持久化索引</h3>
+            <p>SQLite 保存文档和 chunk 元数据，FAISS 保存向量索引。你会理解为什么不能每次提问都重新处理全量资料。</p>
+          </article>
+          <article class="card">
+            <span class="tag">Retrieval</span>
+            <h3>关键词、向量、混合检索</h3>
+            <p>关键词适合精确字符串，向量适合语义问题，混合检索适合真实知识库。</p>
+          </article>
+          <article class="card">
+            <span class="tag">Generation</span>
+            <h3>带引用生成</h3>
+            <p>先把检索证据组装进 prompt，再要求模型只基于证据回答。资料不足时应该拒答。</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="principle" class="section" aria-labelledby="principle-title">
+        <div class="section-head">
+          <h2 id="principle-title">RAG 到底是什么</h2>
+          <p>
+            RAG 的全称是 Retrieval-Augmented Generation，中文常叫检索增强生成。它不是让模型更会猜，而是让模型先查资料。
+          </p>
+        </div>
+        <div class="concept-grid">
+          <div class="definition">
+            RAG = 先从知识库检索证据，再让大模型基于证据生成答案。
+            <small>一句话判断：如果没有检索到可靠证据，系统就不应该装作知道。</small>
+          </div>
+          <div class="flow" aria-label="从资料到答案的 RAG 流程">
+            <div class="flow-step"><b>01</b>Markdown<span>项目文档、笔记、规范、故障记录。</span></div>
+            <div class="flow-step"><b>02</b>Loader<span>扫描文件并生成文档对象。</span></div>
+            <div class="flow-step"><b>03</b>Chunker<span>切成带行号的证据块。</span></div>
+            <div class="flow-step"><b>04</b>Embedding<span>把文本转成数字向量。</span></div>
+            <div class="flow-step"><b>05</b>Index<span>保存元数据和向量索引。</span></div>
+            <div class="flow-step"><b>06</b>Retriever<span>根据问题召回相关 chunk。</span></div>
+            <div class="flow-step"><b>07</b>LLM<span>基于证据回答并附来源。</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="retrieval-title">
+        <div class="section-head">
+          <h2 id="retrieval-title">三种检索怎么选</h2>
+          <p>
+            初学 RAG 时，最容易把问题归因给大模型。实际上，大量失败发生在检索阶段：没有找对证据，后面再强的模型也会答偏。
+          </p>
+        </div>
+        <div class="compare">
+          <article class="card">
+            <span class="tag">Keyword</span>
+            <h3>关键词检索</h3>
+            <p>适合文件名、函数名、命令、版本号、错误码和精确中文短语。缺点是用户换一种说法时容易漏。</p>
+          </article>
+          <article class="card">
+            <span class="tag">Vector</span>
+            <h3>向量检索</h3>
+            <p>适合概念性问题和同义表达。缺点是对路径、代码符号、版本号这类精确标识符不一定敏感。</p>
+          </article>
+          <article class="card">
+            <span class="tag">Hybrid</span>
+            <h3>混合检索</h3>
+            <p>当前项目默认把关键词和向量结果归一化后融合。真实知识库里通常更稳，因为问题往往同时包含概念和精确词。</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="source-map" class="section" aria-labelledby="source-title">
+        <div class="section-head">
+          <h2 id="source-title">源码导览</h2>
+          <p>
+            点击左侧文件，右侧会显示它在 RAG 链路里的角色。你可以按这个顺序读源码，不需要一上来就钻进所有细节。
+          </p>
+        </div>
+        <div class="map">
+          <div class="file-list" role="tablist" aria-label="RAG 源码文件">
+            <button class="file-button" type="button" role="tab" aria-selected="true" data-file="loader">
+              <code>app/documents/loader.py</code><br />扫描 Markdown 知识库
+            </button>
+            <button class="file-button" type="button" role="tab" aria-selected="false" data-file="chunker">
+              <code>app/indexing/chunker.py</code><br />结构感知 chunk 切分
+            </button>
+            <button class="file-button" type="button" role="tab" aria-selected="false" data-file="embeddings">
+              <code>app/indexing/embeddings.py</code><br />hash 与 bge-m3 embedding
+            </button>
+            <button class="file-button" type="button" role="tab" aria-selected="false" data-file="persistent">
+              <code>app/indexing/persistent_index.py</code><br />SQLite + FAISS 持久化索引
+            </button>
+            <button class="file-button" type="button" role="tab" aria-selected="false" data-file="hybrid">
+              <code>app/retrieval/hybrid.py</code><br />关键词和向量融合
+            </button>
+            <button class="file-button" type="button" role="tab" aria-selected="false" data-file="prompt">
+              <code>app/generation/prompt.py</code><br />证据上下文和引用 prompt
+            </button>
+            <button class="file-button" type="button" role="tab" aria-selected="false" data-file="main">
+              <code>app/main.py</code><br />API 串起完整链路
+            </button>
+          </div>
+          <article class="detail" id="file-detail" aria-live="polite"></article>
+        </div>
+      </section>
+
+      <section id="keywords" class="section" aria-labelledby="keywords-title">
+        <div class="section-head">
+          <h2 id="keywords-title">关键词速查</h2>
+          <p>
+            先把这些词弄清楚，读 RAG 代码会轻松很多。每个词都尽量对应到当前项目里的具体行为。
+          </p>
+        </div>
+        <dl class="glossary">
+          <div class="term term-wide">
+            <dt>RAG</dt>
+            <dd>检索增强生成。先从知识库找证据，再把证据交给大模型回答。当前项目的 `/api/answer` 就是完整 RAG 问答入口。</dd>
+          </div>
+          <div class="term term-wide">
+            <dt>Grounding</dt>
+            <dd>让答案“落在证据上”。不是让模型自由发挥，而是要求它只基于检索到的 chunk 回答，并在事实句后加来源。</dd>
+          </div>
+          <div class="term">
+            <dt>Document</dt>
+            <dd>一篇原始资料。当前项目里通常是一份 Markdown 文件，比如 `notes/articles/*.md`。</dd>
+          </div>
+          <div class="term">
+            <dt>Chunk</dt>
+            <dd>从长文档切出来的小文本块。检索时召回的是 chunk，不是整篇文档。</dd>
+          </div>
+          <div class="term">
+            <dt>Metadata</dt>
+            <dd>描述 chunk 的附加信息，例如文件路径、标题路径、起止行号和文本哈希。</dd>
+          </div>
+          <div class="term">
+            <dt>Embedding</dt>
+            <dd>把文本转换成一组数字向量。语义越接近，向量距离通常越近。</dd>
+          </div>
+          <div class="term">
+            <dt>Vector</dt>
+            <dd>一串数字，表示文本的语义位置。项目里向量会被归一化后用于相似度搜索。</dd>
+          </div>
+          <div class="term">
+            <dt>Vector Store</dt>
+            <dd>向量索引库。当前项目用 FAISS 存向量，用 SQLite 存 chunk 原文和元数据。</dd>
+          </div>
+          <div class="term">
+            <dt>FAISS</dt>
+            <dd>高效向量搜索库。项目里用它根据 query vector 找最相似的 chunk vector。</dd>
+          </div>
+          <div class="term">
+            <dt>SQLite</dt>
+            <dd>本地数据库。项目里保存 documents、chunks 和 index_metadata。</dd>
+          </div>
+          <div class="term">
+            <dt>Query</dt>
+            <dd>用户问题。检索时 query 也会被转换成向量，和 chunk 向量进行比较。</dd>
+          </div>
+          <div class="term">
+            <dt>Retriever</dt>
+            <dd>检索器。负责从所有 chunk 中找出与 query 最相关的一批候选证据。</dd>
+          </div>
+          <div class="term">
+            <dt>Keyword Search</dt>
+            <dd>关键词检索。适合找路径、命令、函数名、配置项、错误码等精确字符串。</dd>
+          </div>
+          <div class="term">
+            <dt>Vector Search</dt>
+            <dd>向量检索。适合找语义相关内容，即使问题和文档用词不完全一样。</dd>
+          </div>
+          <div class="term">
+            <dt>Hybrid Search</dt>
+            <dd>混合检索。把关键词结果和向量结果合并，项目默认关键词权重更高。</dd>
+          </div>
+          <div class="term">
+            <dt>Top K</dt>
+            <dd>最多返回多少条检索结果。Top K 越大，证据更全，但噪声也可能更多。</dd>
+          </div>
+          <div class="term">
+            <dt>Score</dt>
+            <dd>检索相关性分数。它不是概率，只能用来比较同一次检索里的相对排序。</dd>
+          </div>
+          <div class="term">
+            <dt>Recall</dt>
+            <dd>召回。意思是“应该找到的证据有没有被找出来”。RAG 答错常常是召回失败。</dd>
+          </div>
+          <div class="term">
+            <dt>Precision</dt>
+            <dd>精度。意思是“找出来的结果里有多少是真的有用”。Top K 过大时精度常会下降。</dd>
+          </div>
+          <div class="term">
+            <dt>Reranker</dt>
+            <dd>重排器。先粗检索一批候选，再用更精细的模型重新排序。当前路线图里计划后续加入。</dd>
+          </div>
+          <div class="term">
+            <dt>Prompt</dt>
+            <dd>发给大模型的指令和上下文。项目里 prompt 会包含来源编号、chunk 原文和用户问题。</dd>
+          </div>
+          <div class="term">
+            <dt>Context</dt>
+            <dd>模型回答时能看到的参考材料。RAG 的 context 应该来自检索结果，而不是凭空补充。</dd>
+          </div>
+          <div class="term">
+            <dt>Citation</dt>
+            <dd>引用来源。当前项目用文件路径、标题路径和行号说明答案依据来自哪里。</dd>
+          </div>
+          <div class="term">
+            <dt>Hallucination</dt>
+            <dd>幻觉。模型编出看似合理但没有证据支持的内容。RAG 用证据和引用降低这个风险。</dd>
+          </div>
+          <div class="term">
+            <dt>No Answer</dt>
+            <dd>拒答或证据不足。当知识库没有可靠证据时，系统应该返回“当前知识库证据不足。”</dd>
+          </div>
+          <div class="term">
+            <dt>Provider</dt>
+            <dd>具体服务实现。比如 embedding provider 可以是 `hash`，也可以是 `bge-m3`。</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section id="route" class="section" aria-labelledby="route-title">
+        <div class="section-head">
+          <h2 id="route-title">从 0 到 1 学习路线</h2>
+          <p>
+            不建议一开始就追求“问答效果很酷”。先把证据链跑通，再调 chunk、embedding、检索权重和引用生成。
+          </p>
+        </div>
+        <div class="path">
+          <article class="lesson">
+            <div>
+              <h3>理解文档和 chunk</h3>
+              <p>先跑 `/api/index/preview`，观察同一篇 Markdown 被切成了哪些 chunk，标题路径和行号是否保留完整。</p>
+            </div>
+          </article>
+          <article class="lesson">
+            <div>
+              <h3>比较关键词和向量检索</h3>
+              <p>用文件名、命令、概念问题分别测试 keyword、vector、hybrid，观察哪个模式召回更准。</p>
+            </div>
+          </article>
+          <article class="lesson">
+            <div>
+              <h3>理解 embedding 的作用</h3>
+              <p>先用 hash 跑通流程，再换 bge-m3，比较同义表达和精确技术词的召回差异。</p>
+            </div>
+          </article>
+          <article class="lesson">
+            <div>
+              <h3>构建持久化索引</h3>
+              <p>调用 `/api/index/build`，理解为什么 SQLite 存元数据、FAISS 存向量，以及 provider 不一致时为什么要重建索引。</p>
+            </div>
+          </article>
+          <article class="lesson">
+            <div>
+              <h3>学习 grounded generation</h3>
+              <p>看 `app/generation/prompt.py` 如何把 chunk 格式化成 `[来源 N]`，以及为什么每个事实句都要有引用。</p>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="practice-title">
+        <div class="section-head">
+          <h2 id="practice-title">推荐练习问题</h2>
+          <p>用这些问题跑一遍前端控制台，可以快速建立 RAG 调试直觉。</p>
+        </div>
+        <ul class="checklist">
+          <li>chunk 为什么要保留标题路径和行号？</li>
+          <li>为什么 hash embedding 只能用于演示，不能代表真实语义检索？</li>
+          <li>搜索 `SELF_RAG_LLM_API_KEY` 时，关键词检索和向量检索谁更可靠？</li>
+          <li>问“如何减少模型幻觉”时，hybrid 是否能召回 prompt 约束？</li>
+          <li>如果证据不足，系统应该返回什么？</li>
+          <li>为什么持久化索引的 provider 和查询 provider 必须一致？</li>
+        </ul>
+      </section>
+
+      <footer class="footer">
+        这个页面基于当前仓库结构生成：Self RAG 是一个本地 Markdown RAG 学习与调试控制台。
+      </footer>
+    </main>
+
+    <script>
+      const details = {
+        loader: {
+          title: "文档加载：定义知识库边界",
+          body:
+            "RAG 只能基于你给它的资料回答。loader 负责递归扫描 Markdown 文件，并把文件内容、相对路径、哈希、修改时间等信息整理成文档对象。",
+          code: "Markdown folder -> scan_markdown_folder(root) -> MarkdownDocument[]"
+        },
+        chunker: {
+          title: "Chunk 切分：决定证据粒度",
+          body:
+            "chunker 按 Markdown 标题组织 section，再按段落拆分长文本，同时避免切开 fenced code block，并保留 heading_path、start_line、end_line。",
+          code: "MarkdownDocument -> chunk_markdown_document() -> MarkdownChunk[]"
+        },
+        embeddings: {
+          title: "Embedding：把文本变成可比较的向量",
+          body:
+            "hash provider 用于本地测试，bge-m3 / sentence-transformers provider 用于真实语义检索。向量归一化后可以用相似度搜索比较问题和 chunk。",
+          code: "texts -> embed_texts(texts) -> normalized vectors"
+        },
+        persistent: {
+          title: "持久化索引：让检索变快且稳定",
+          body:
+            "SQLite 保存文档和 chunk 元数据，FAISS 保存向量索引。构建完成后，查询不必再扫描、切分、embedding 全部 Markdown。",
+          code: "chunks -> SQLite metadata\nvectors -> FAISS IndexFlatIP + ids"
+        },
+        hybrid: {
+          title: "混合检索：结合精确匹配和语义匹配",
+          body:
+            "HybridRetriever 同时运行向量检索和关键词检索，然后归一化分数并按权重融合。当前默认更偏关键词，适合包含文件名、命令、配置项的项目文档。",
+          code: "final = 0.35 * vector_score + 0.65 * keyword_score"
+        },
+        prompt: {
+          title: "生成 prompt：让模型受证据约束",
+          body:
+            "prompt builder 把检索到的 chunk 编成 [来源 N]，并要求模型只基于证据回答。没有证据时返回“当前知识库证据不足。”",
+          code: "[来源 1] path:start-end > heading\nchunk text\n\n问题：..."
+        },
+        main: {
+          title: "API 编排：把 RAG 链路串起来",
+          body:
+            "FastAPI 暴露 preview、build、keyword、vector、hybrid 和 answer 接口。前端控制台调用这些接口，展示 chunk、分数、来源和生成上下文。",
+          code: "POST /api/index/preview\nPOST /api/index/build\nPOST /api/retrieval/hybrid\nPOST /api/answer"
+        }
+      };
+
+      const detail = document.querySelector("#file-detail");
+      const buttons = document.querySelectorAll(".file-button");
+
+      function renderDetail(key) {
+        const item = details[key];
+        detail.innerHTML = `
+          <p class="eyebrow">Source role</p>
+          <h3>${item.title}</h3>
+          <p>${item.body}</p>
+          <pre><code>${item.code}</code></pre>
+        `;
+      }
+
+      buttons.forEach((button) => {
+        button.addEventListener("click", () => {
+          buttons.forEach((item) => item.setAttribute("aria-selected", "false"));
+          button.setAttribute("aria-selected", "true");
+          renderDetail(button.dataset.file);
+        });
+      });
+
+      renderDetail("loader");
+    </script>
+  </body>
+</html>

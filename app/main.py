@@ -23,6 +23,9 @@ from app.indexing.persistent_index import (
 from app.retrieval.schemas import RetrievedChunk, VectorSearchDebug
 from app.retrieval.hybrid import HybridRetriever, merge_results
 from app.retrieval.keyword import KeywordRetriever
+from app.evaluation.runner import EvalReport, run_eval
+from app.retrieval.query_rewriter import rewrite_query
+from app.retrieval.reranker import rerank
 from app.retrieval.vector import VectorRetriever
 
 
@@ -140,6 +143,14 @@ class CitationResponse(BaseModel):
 
 class AnswerRequest(VectorSearchRequest):
     mode: str = Field(default="hybrid", pattern="^(hybrid|vector|keyword)$")
+    enable_multi_query: bool = Field(
+        default=False,
+        description="Use LLM to rewrite the query into multiple search queries for better recall",
+    )
+    enable_reranker: bool = Field(
+        default=False,
+        description="Use LLM to re-score retrieved chunks for more precise ranking",
+    )
 
 
 class AnswerResponse(BaseModel):
@@ -150,6 +161,7 @@ class AnswerResponse(BaseModel):
     mode: str
     model: str
     provider: str
+    rewritten_queries: list[str] = Field(default_factory=list)
 
 
 @app.get("/health")
@@ -233,9 +245,34 @@ def hybrid_search(request: VectorSearchRequest) -> HybridSearchResponse:
 
 @app.post("/api/answer")
 def answer_question(request: AnswerRequest) -> AnswerResponse:
-    retrieval = _run_retrieval(mode=request.mode, request=request)
-    prompt = build_answer_prompt(request.query, retrieval.results)
-    if not retrieval.results:
+    rewritten_queries: list[str] = []
+
+    if request.enable_multi_query:
+        try:
+            llm = create_llm_provider()
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        queries = rewrite_query(request.query, llm)
+        rewritten_queries = queries[1:]  # exclude original
+        # Over-fetch when reranker will trim later
+        over_fetch_k = request.top_k * 3 if request.enable_reranker else None
+        results = _run_multi_query_retrieval(
+            queries=queries, mode=request.mode, request=request,
+            top_k_override=over_fetch_k,
+        )
+    else:
+        retrieval = _run_retrieval(mode=request.mode, request=request)
+        results = retrieval.results
+
+    if request.enable_reranker and results:
+        try:
+            rerank_llm = create_llm_provider()
+            results = rerank(request.query, results, rerank_llm, top_k=request.top_k)
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    prompt = build_answer_prompt(request.query, results)
+    if not results:
         return AnswerResponse(
             answer=EMPTY_EVIDENCE_ANSWER,
             citations=[],
@@ -244,6 +281,7 @@ def answer_question(request: AnswerRequest) -> AnswerResponse:
             mode=request.mode,
             model="not-called",
             provider="not-called",
+            rewritten_queries=rewritten_queries,
         )
 
     try:
@@ -269,11 +307,12 @@ def answer_question(request: AnswerRequest) -> AnswerResponse:
             )
             for citation in prompt.citations
         ],
-        retrieved_chunks=retrieval.results,
+        retrieved_chunks=results,
         context=prompt.context,
         mode=request.mode,
         model=provider.model,
         provider=provider.name,
+        rewritten_queries=rewritten_queries,
     )
 
 
@@ -285,6 +324,31 @@ def _run_retrieval(mode: str, request: VectorSearchRequest) -> VectorSearchRespo
     if mode == "hybrid":
         return _run_hybrid_search(request)
     raise ValueError(f"Unsupported retrieval mode: {mode}")
+
+
+def _run_multi_query_retrieval(
+    *,
+    queries: list[str],
+    mode: str,
+    request: VectorSearchRequest,
+    top_k_override: int | None = None,
+) -> list[RetrievedChunk]:
+    """Run retrieval for each query, merge results keeping the highest score per chunk."""
+    final_top_k = top_k_override or request.top_k
+    best: dict[str, RetrievedChunk] = {}
+    for query in queries:
+        patched = request.model_copy(update={"query": query})
+        retrieval = _run_retrieval(mode=mode, request=patched)
+        for chunk in retrieval.results:
+            chunk_key = f"{chunk.document_path}:{chunk.chunk_index}"
+            if chunk_key not in best or chunk.score > best[chunk_key].score:
+                best[chunk_key] = chunk
+
+    merged = sorted(best.values(), key=lambda c: c.score, reverse=True)
+    return [
+        chunk.model_copy(update={"rank": rank})
+        for rank, chunk in enumerate(merged[:final_top_k], start=1)
+    ]
 
 
 def _run_vector_search(request: VectorSearchRequest) -> VectorSearchResponse:
@@ -450,3 +514,37 @@ def _chunk_preview(chunk: MarkdownChunk) -> ChunkPreview:
         text=chunk.text,
         text_hash=chunk.text_hash,
     )
+
+
+class EvalRequest(BaseModel):
+    dataset_path: Path = Field(description="Path to the eval JSON file")
+    root: Path = Field(description="Markdown folder to search against")
+    mode: str = Field(default="hybrid", pattern="^(hybrid|vector|keyword)$")
+    top_k: int = Field(default=5, ge=1, le=50)
+    embedding_provider: str | None = None
+    embedding_model_path: Path | None = None
+    enable_multi_query: bool = False
+    enable_reranker: bool = False
+
+
+@app.post("/api/eval")
+def run_evaluation(request: EvalRequest) -> EvalReport:
+    """Run an evaluation dataset against the retrieval pipeline."""
+
+    def retrieval_fn(query: str) -> list:
+        search_request = VectorSearchRequest(
+            root=request.root,
+            query=query,
+            top_k=request.top_k,
+            embedding_provider=request.embedding_provider,
+            embedding_model_path=request.embedding_model_path,
+        )
+        retrieval = _run_retrieval(mode=request.mode, request=search_request)
+        return retrieval.results
+
+    try:
+        report = run_eval(request.dataset_path, retrieval_fn)
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return report
