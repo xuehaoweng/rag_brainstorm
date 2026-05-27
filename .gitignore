@@ -13,6 +13,6 @@ data/sqlite/*.db-*
 data/faiss/
 data/vector/
 models/
-self_rag.egg-info/
+rag_learning.egg-info/
 *.egg-info/
 notes/

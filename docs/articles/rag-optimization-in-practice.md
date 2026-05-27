@@ -1,6 +1,6 @@
 # RAG 优化实战：Query 改写 + Reranker + 评估体系，从原理到代码
 
-> 本文基于一个真实的 RAG 学习项目（self_rag），从零实现三个核心优化：Multi-Query 改写、Reranker 精排、评估体系。每个环节先讲原理，再给出完整代码和测试。
+> 本文基于一个真实的 RAG 学习项目（rag_learning），从零实现三个核心优化：Multi-Query 改写、Reranker 精排、评估体系。每个环节先讲原理，再给出完整代码和测试。
 
 ## 前言：一个 RAG 系统的典型困境
 

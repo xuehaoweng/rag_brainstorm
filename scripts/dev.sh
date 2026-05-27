@@ -17,7 +17,7 @@ cleanup() {
 
 trap cleanup EXIT INT TERM
 
-printf 'Starting Self RAG development stack...\n'
+printf 'Starting RAG Learning development stack...\n'
 printf '  Backend:  http://0.0.0.0:8800\n'
 printf '  Frontend: http://0.0.0.0:5173\n\n'
 

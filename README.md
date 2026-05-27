@@ -13,6 +13,10 @@
 - 检索调试 UI：前端展示召回 chunk、分数、来源文件、标题路径和原文证据。
 - 答案生成：支持 OpenAI-compatible `/chat/completions` 接口，基于检索证据生成带引用的回答。
 - 在线调试链路：可关闭持久化索引，按请求实时扫描、切分、embedding 和检索，方便观察参数变化。
+- Multi-Query 改写：调用 LLM 将单问题扩展为多个不同角度的检索查询，扩大召回覆盖面。
+- Reranker 精排：基于 LLM 对初步召回的 chunk 做二次相关性评分和重排序，提升 Top-K 质量。
+- Milvus 向量后端：可选远程 Milvus 替代本地 FAISS，支持更大规模向量存储。
+- 多数据源：除本地 Markdown 外，支持网页抓取和飞书文档加载（通过 Protocol 扩展）。
 
 ## 适合谁
 
@@ -58,20 +62,20 @@ cp .env.example .env
 最小可用配置：
 
 ```env
-SELF_RAG_EMBEDDING_PROVIDER=hash
-SELF_RAG_DATABASE_PATH=data/sqlite/self_rag.db
-SELF_RAG_FAISS_INDEX_PATH=data/faiss/self_rag.index
+RAG_LEARNING_EMBEDDING_PROVIDER=hash
+RAG_LEARNING_DATABASE_PATH=data/sqlite/rag_learning.db
+RAG_LEARNING_FAISS_INDEX_PATH=data/faiss/rag_learning.index
 ```
 
 如果要生成答案，需要配置 OpenAI-compatible LLM：
 
 ```env
-SELF_RAG_LLM_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
-SELF_RAG_LLM_MODEL=doubao-seed-2-0-code-preview-260215
-SELF_RAG_LLM_API_KEY=your-local-api-key
+RAG_LEARNING_LLM_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
+RAG_LEARNING_LLM_MODEL=doubao-seed-2-0-code-preview-260215
+RAG_LEARNING_LLM_API_KEY=your-local-api-key
 ```
 
-`SELF_RAG_LLM_API_KEY` 只在本地运行时读取；如果不配置，检索和索引功能仍可正常使用，但“生成回答”不可用。
+`RAG_LEARNING_LLM_API_KEY` 只在本地运行时读取；如果不配置，检索和索引功能仍可正常使用，但“生成回答”不可用。
 
 ### 4. 启动开发服务
 
@@ -144,6 +148,27 @@ Markdown 文件
 
 这避免了每次提问都重新扫描、切分和 embedding 全部 Markdown 文件。
 
+### Multi-Query 改写
+
+检索前可选调用 LLM 将用户问题改写为多个不同角度的查询：
+
+```text
+用户问题 -> LLM 改写 -> [query_1, query_2, query_3]
+  -> 每路查询独立检索 -> 合并去重 -> Reranker 精排
+```
+
+改写覆盖同义词、上位概念和相关术语，能有效解决“用户用词和文档用词不一致”导致的漏召问题。失败时自动降级为原问题单路检索。
+
+### Reranker 精排
+
+初步召回（关键词 / 向量 / 混合）后，可选使用 LLM 对 chunk 做二次相关性评分：
+
+```text
+召回 chunk -> LLM 评分 (0-10) -> 按分数重排序 -> 取 Top-K
+```
+
+每段文本截取前 800 字符输入 LLM，输出 `[编号] 分数` 格式。解析失败时自动保持原排序，不中断检索链路。
+
 ### 混合检索
 
 混合检索会同时运行：
@@ -182,13 +207,15 @@ React + Vite 前端
   v
 FastAPI 后端
   |
-  +-- Markdown 扫描器
+  +-- 多数据源加载器（Markdown / 网页 / 飞书）
   +-- 结构感知文本切分器
   +-- SQLite 文档和 chunk 元数据
-  +-- FAISS 本地向量索引
+  +-- FAISS 本地向量索引 / Milvus 远程向量存储
+  +-- Multi-Query 改写器
   +-- 关键词检索器
   +-- 向量检索器
   +-- 混合检索器
+  +-- Reranker 精排器
   +-- OpenAI-compatible 答案生成器
 ```
 
@@ -197,11 +224,12 @@ FastAPI 后端
 ```text
 app/
   main.py                  FastAPI 应用、请求/响应模型、API 路由
-  config.py                从 .env 和 SELF_RAG_* 环境变量加载运行配置
+  config.py                从 .env 和 RAG_LEARNING_* 环境变量加载运行配置
   db.py                    SQLite 连接辅助函数和表结构
   documents/
     loader.py              递归扫描 Markdown 文件
     models.py              MarkdownDocument 和 MarkdownChunk 数据类
+    sources.py             多数据源加载器（本地 Markdown / 网页 / 飞书文档）
   generation/
     llm.py                 OpenAI-compatible LLM provider
     prompt.py              RAG 上下文和引用 prompt 构造
@@ -210,10 +238,13 @@ app/
     embeddings.py          hash 和 sentence-transformers embedding provider
     vector_store.py        内存向量检索存储
     persistent_index.py    SQLite + FAISS 持久化索引构建和查询
+    milvus_store.py        Milvus 远程向量存储
   retrieval/
     keyword.py             关键词检索
     vector.py              向量检索
     hybrid.py              关键词结果和向量结果加权融合
+    query_rewriter.py      Multi-Query 改写（LLM 扩展查询角度）
+    reranker.py            LLM-based 精排（二次评分排序）
     schemas.py             共享检索响应模型
 
 frontend/
@@ -243,6 +274,7 @@ POST /api/retrieval/vector
 POST /api/retrieval/hybrid
 
 POST /api/answer
+POST /api/eval
 ```
 
 核心接口说明：
@@ -251,35 +283,65 @@ POST /api/answer
 - `/api/index/build`：全量重建 SQLite + FAISS 持久化索引。
 - `/api/index/status`：查看当前持久化索引状态。
 - `/api/retrieval/*`：返回带分数和来源元数据的检索结果。
-- `/api/answer`：先检索证据，再生成带引用来源的回答；如果没有可用证据，或生成结果没有通过引用校验，会返回“当前知识库证据不足。”。
-
-增量刷新和定时索引已在前端预留按钮，但当前版本尚未实现。
+- `/api/answer`：先检索证据，再生成带引用来源的回答。支持 `enable_multi_query` 和 `enable_reranker` 开关开启 Multi-Query 改写和 Reranker 精排。如果没有可用证据，或生成结果没有通过引用校验，会返回”当前知识库证据不足。”。
+- `/api/eval`：运行评估数据集，输出命中率等评测指标。
 
 ## 配置参考
 
-所有运行配置定义在 `app/config.py`，可通过 `.env` 中的 `SELF_RAG_` 前缀变量覆盖。
+所有运行配置定义在 `app/config.py`，可通过 `.env` 中的 `RAG_LEARNING_` 前缀变量覆盖。
 
 ```env
-SELF_RAG_DATABASE_PATH=data/sqlite/self_rag.db
-SELF_RAG_FAISS_INDEX_PATH=data/faiss/self_rag.index
-SELF_RAG_DEFAULT_MARKDOWN_ROOT=/path/to/markdown
+RAG_LEARNING_DATABASE_PATH=data/sqlite/rag_learning.db
+RAG_LEARNING_FAISS_INDEX_PATH=data/faiss/rag_learning.index
+RAG_LEARNING_DEFAULT_MARKDOWN_ROOT=/path/to/markdown
 
-SELF_RAG_EMBEDDING_PROVIDER=hash
-SELF_RAG_EMBEDDING_MODEL_PATH=models/BAAI/bge-m3
+RAG_LEARNING_EMBEDDING_PROVIDER=hash
+RAG_LEARNING_EMBEDDING_MODEL_PATH=models/BAAI/bge-m3
 
-SELF_RAG_LLM_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
-SELF_RAG_LLM_MODEL=doubao-seed-2-0-code-preview-260215
-SELF_RAG_LLM_API_KEY=your-local-api-key
+RAG_LEARNING_LLM_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
+RAG_LEARNING_LLM_MODEL=doubao-seed-2-0-code-preview-260215
+RAG_LEARNING_LLM_API_KEY=your-local-api-key
+```
+
+向量后端：
+
+```text
+faiss     本地文件向量索引（默认）
+milvus    远程 Milvus 向量数据库，需配置 host/port/collection
 ```
 
 Embedding provider：
 
 ```text
 hash      无依赖的确定性向量，适合快速本地测试
-bge-m3    从 SELF_RAG_EMBEDDING_MODEL_PATH 加载的本地 sentence-transformers 模型
+bge-m3    从 RAG_LEARNING_EMBEDDING_MODEL_PATH 加载的本地 sentence-transformers 模型
 ```
 
 LLM provider 使用 OpenAI-compatible `/chat/completions` 协议。
+
+完整配置示例：
+
+```env
+# 向量后端
+RAG_LEARNING_VECTOR_BACKEND=faiss
+# RAG_LEARNING_VECTOR_BACKEND=milvus
+# RAG_LEARNING_MILVUS_HOST=localhost
+# RAG_LEARNING_MILVUS_PORT=19530
+# RAG_LEARNING_MILVUS_COLLECTION=rag_learning_chunks
+
+# 持久化索引路径
+RAG_LEARNING_DATABASE_PATH=data/sqlite/rag_learning.db
+RAG_LEARNING_FAISS_INDEX_PATH=data/faiss/rag_learning.index
+
+# Embedding
+RAG_LEARNING_EMBEDDING_PROVIDER=hash
+RAG_LEARNING_EMBEDDING_MODEL_PATH=models/BAAI/bge-m3
+
+# LLM
+RAG_LEARNING_LLM_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
+RAG_LEARNING_LLM_MODEL=doubao-seed-2-0-code-preview-260215
+RAG_LEARNING_LLM_API_KEY=your-local-api-key
+```
 
 ## 开发
 
@@ -303,24 +365,36 @@ npm run build
 cd frontend && npm run build
 ```
 
+## 学习进度与已实现优化
+
+本项目按学习阶段逐步添加 RAG 优化，每个环节都有完整代码和测试。
+
+**已完成：**
+
+- [x] 基础 RAG 链路：Markdown 扫描、chunk、embedding、检索、答案生成
+- [x] 持久化索引：SQLite + FAISS，避免每次请求全量重建
+- [x] 混合检索：关键词 + 向量加权融合
+- [x] Multi-Query 改写：LLM 扩展查询角度，提升召回率
+- [x] Reranker 精排：LLM-based 二次评分排序
+- [x] Milvus 向量后端：可选远程 Milvus 替代本地 FAISS
+- [x] 多数据源：本地 Markdown、网页抓取、飞书文档（Protocol 扩展）
+
+**待完成：**
+
+- [ ] 增量索引：只处理新增、修改和删除的文件
+- [ ] 定时索引：后台定期刷新知识库
+- [ ] 评测集：记录问题、期望来源和命中率，避免调参只靠感觉
+- [ ] 更多数据源：PDF、代码仓库等
+
 ## 当前限制
 
 - 持久化索引目前是手动全量重建，不是增量更新。
 - 定时索引尚未实现。
-- 只支持 Markdown 文件。
 - 答案质量依赖检索结果、chunk 质量和所配置的 LLM。
-- 默认没有内置 reranker，混合检索只做关键词和向量结果的加权融合。
-
-## 路线图
-
-- 增量索引：只处理新增、修改和删除的 Markdown 文件。
-- 定时索引：后台定期刷新知识库。
-- Reranker：对初步召回结果做二次排序。
-- 评测集：记录问题、期望来源和命中率，避免调参只靠感觉。
-- 更多数据源：PDF、网页、代码仓库等。
+- 多数据源中的网页和飞书文档依赖外部库（trafilatura / lark-cli），需要单独安装。
 
 ## 本地数据
 
-- SQLite 数据默认写入 `data/sqlite/self_rag.db`。
-- FAISS 索引默认写入 `data/faiss/self_rag.index`。
+- SQLite 数据默认写入 `data/sqlite/rag_learning.db`。
+- FAISS 索引默认写入 `data/faiss/rag_learning.index`。
 - 这些文件是本地运行产物，可以删除后重新构建索引。

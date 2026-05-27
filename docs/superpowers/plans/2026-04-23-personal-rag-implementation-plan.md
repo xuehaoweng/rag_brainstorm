@@ -24,7 +24,7 @@ Deliverables:
 Suggested structure:
 
 ```text
-self_rag/
+rag_learning/
   app/
     main.py
     config.py

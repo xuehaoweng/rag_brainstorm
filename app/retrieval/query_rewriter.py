@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import re
+from time import perf_counter
 from typing import Protocol
 
 log = logging.getLogger(__name__)
@@ -47,19 +48,30 @@ def rewrite_query(
 
     user_prompt = _USER_PROMPT_TEMPLATE.format(n=num_rewrites, query=query)
 
+    log.info("[multi-query] original query: %r, requesting %d rewrites", query, num_rewrites)
+    t0 = perf_counter()
+
     try:
         raw = llm.generate(system_prompt=_SYSTEM_PROMPT, user_prompt=user_prompt)
     except Exception:
         log.warning("Query rewrite failed, falling back to original query", exc_info=True)
         return [query]
 
+    elapsed = perf_counter() - t0
     rewrites = _parse_rewrites(raw)
     if not rewrites:
-        log.warning("Query rewrite returned no usable lines, raw=%r", raw)
+        log.warning("Query rewrite returned no usable lines (%.2fs), raw=%r", elapsed, raw)
         return [query]
 
+    result = [query] + rewrites[:num_rewrites]
+    log.info(
+        "[multi-query] LLM rewrite done in %.2fs, %d queries: %s",
+        elapsed,
+        len(result),
+        " | ".join(result),
+    )
     # Always keep the original query first.
-    return [query] + rewrites[:num_rewrites]
+    return result
 
 
 def _parse_rewrites(raw: str) -> list[str]:

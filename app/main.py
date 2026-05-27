@@ -1,6 +1,8 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+import logging
 from pathlib import Path
+from time import perf_counter
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
@@ -28,6 +30,8 @@ from app.retrieval.query_rewriter import rewrite_query
 from app.retrieval.reranker import rerank
 from app.retrieval.vector import VectorRetriever
 
+log = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -35,7 +39,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     yield
 
 
-app = FastAPI(title="Self RAG", lifespan=lifespan)
+app = FastAPI(title="RAG Learning", lifespan=lifespan)
 
 
 class IndexPreviewRequest(BaseModel):
@@ -245,6 +249,7 @@ def hybrid_search(request: VectorSearchRequest) -> HybridSearchResponse:
 
 @app.post("/api/answer")
 def answer_question(request: AnswerRequest) -> AnswerResponse:
+    t_start = perf_counter()
     rewritten_queries: list[str] = []
 
     if request.enable_multi_query:
@@ -256,13 +261,23 @@ def answer_question(request: AnswerRequest) -> AnswerResponse:
         rewritten_queries = queries[1:]  # exclude original
         # Over-fetch when reranker will trim later
         over_fetch_k = request.top_k * 3 if request.enable_reranker else None
+        t_retrieval = perf_counter()
         results = _run_multi_query_retrieval(
             queries=queries, mode=request.mode, request=request,
             top_k_override=over_fetch_k,
         )
+        log.info(
+            "[answer] multi-query retrieval: %d results in %.2fs",
+            len(results), perf_counter() - t_retrieval,
+        )
     else:
+        t_retrieval = perf_counter()
         retrieval = _run_retrieval(mode=request.mode, request=request)
         results = retrieval.results
+        log.info(
+            "[answer] single-query retrieval: %d results in %.2fs",
+            len(results), perf_counter() - t_retrieval,
+        )
 
     if request.enable_reranker and results:
         try:
@@ -294,6 +309,14 @@ def answer_question(request: AnswerRequest) -> AnswerResponse:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     answer, _ = validate_answer(generated_answer, prompt.citations)
+
+    log.info(
+        "[answer] total %.2fs | query=%r multi_query=%s reranker=%s",
+        perf_counter() - t_start,
+        request.query,
+        request.enable_multi_query,
+        request.enable_reranker,
+    )
 
     return AnswerResponse(
         answer=answer,
@@ -336,15 +359,24 @@ def _run_multi_query_retrieval(
     """Run retrieval for each query, merge results keeping the highest score per chunk."""
     final_top_k = top_k_override or request.top_k
     best: dict[str, RetrievedChunk] = {}
-    for query in queries:
+    for i, query in enumerate(queries):
+        t0 = perf_counter()
         patched = request.model_copy(update={"query": query})
         retrieval = _run_retrieval(mode=mode, request=patched)
+        log.info(
+            "[multi-query] query %d/%d: %r → %d results in %.2fs",
+            i + 1, len(queries), query, len(retrieval.results), perf_counter() - t0,
+        )
         for chunk in retrieval.results:
             chunk_key = f"{chunk.document_path}:{chunk.chunk_index}"
             if chunk_key not in best or chunk.score > best[chunk_key].score:
                 best[chunk_key] = chunk
 
     merged = sorted(best.values(), key=lambda c: c.score, reverse=True)
+    log.info(
+        "[multi-query] merged: %d unique chunks from %d queries, returning top %d",
+        len(best), len(queries), min(final_top_k, len(merged)),
+    )
     return [
         chunk.model_copy(update={"rank": rank})
         for rank, chunk in enumerate(merged[:final_top_k], start=1)

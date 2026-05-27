@@ -1,2 +1,2 @@
-"""Self RAG backend package."""
+"""RAG Learning backend package."""
 

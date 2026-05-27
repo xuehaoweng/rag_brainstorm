@@ -7,9 +7,10 @@ import numpy as np
 from app.config import settings
 from app.db import connect, init_db
 from app.documents.loader import scan_markdown_folder
-from app.documents.models import MarkdownChunk
+from app.documents.models import MarkdownChunk, MarkdownDocument
 from app.indexing.chunker import chunk_markdown_document
 from app.indexing.embeddings import EmbeddingProvider
+from app.indexing.milvus_store import MilvusVectorStore
 from app.retrieval.schemas import RetrievedChunk, VectorSearchDebug
 from app.retrieval.vector import embedding_text, is_searchable
 
@@ -58,9 +59,56 @@ def build_persistent_index(
     database_path: Path | None = None,
     faiss_index_path: Path | None = None,
 ) -> PersistentIndexBuildResult:
-    faiss = _load_faiss()
     init_db(database_path)
     documents = scan_markdown_folder(root)
+    return _build_index_from_documents(
+        documents=documents,
+        embedding_provider=embedding_provider,
+        max_chars=max_chars,
+        overlap_chars=overlap_chars,
+        database_path=database_path,
+        faiss_index_path=faiss_index_path,
+        root=str(root),
+    )
+
+
+def build_persistent_index_from_sources(
+    *,
+    sources: list,
+    embedding_provider: EmbeddingProvider,
+    max_chars: int,
+    overlap_chars: int,
+    database_path: Path | None = None,
+    faiss_index_path: Path | None = None,
+) -> PersistentIndexBuildResult:
+    """Build index from multiple document sources (web, lark, local files, etc)."""
+    init_db(database_path)
+    documents = []
+    for source in sources:
+        documents.extend(source.load())
+    return _build_index_from_documents(
+        documents=documents,
+        embedding_provider=embedding_provider,
+        max_chars=max_chars,
+        overlap_chars=overlap_chars,
+        database_path=database_path,
+        faiss_index_path=faiss_index_path,
+        root="multi-source",
+    )
+
+
+def _build_index_from_documents(
+    *,
+    documents: list[MarkdownDocument],
+    embedding_provider: EmbeddingProvider,
+    max_chars: int,
+    overlap_chars: int,
+    database_path: Path | None,
+    faiss_index_path: Path | None,
+    root: str,
+) -> PersistentIndexBuildResult:
+    """Core index building logic shared by all sources."""
+    """Core index building logic shared by all sources."""
     chunks_by_document = [
         (
             document,
@@ -142,7 +190,7 @@ def build_persistent_index(
         _write_metadata(
             connection,
             {
-                "root": str(root),
+                "root": root,
                 "provider": embedding_provider.name,
                 "vector_dimensions": str(vector_dimensions),
                 "document_count": str(len(documents)),
@@ -154,10 +202,19 @@ def build_persistent_index(
         )
 
     if vectors:
-        matrix = _vector_matrix(vectors)
-        index = faiss.IndexIDMap2(faiss.IndexFlatIP(vector_dimensions))
-        index.add_with_ids(matrix, vector_ids)
-        faiss.write_index(index, str(index_path))
+        if settings.vector_backend == "milvus":
+            _build_milvus_index(
+                vectors=vectors,
+                searchable_chunks=searchable_chunks,
+                chunk_ids_by_key=chunk_ids_by_key,
+                vector_dimensions=vector_dimensions,
+            )
+        else:
+            matrix = _vector_matrix(vectors)
+            faiss = _load_faiss()
+            index = faiss.IndexIDMap2(faiss.IndexFlatIP(vector_dimensions))
+            index.add_with_ids(matrix, vector_ids)
+            faiss.write_index(index, str(index_path))
     elif index_path.exists():
         index_path.unlink()
 
@@ -167,7 +224,7 @@ def build_persistent_index(
         indexed_chunk_count=len(searchable_chunks),
         provider=embedding_provider.name,
         vector_dimensions=vector_dimensions,
-        root=str(root),
+        root=root,
         database_path=str(database_path or settings.database_path),
         faiss_index_path=str(index_path),
         built_at=built_at,
@@ -188,8 +245,20 @@ def get_persistent_index_status(
 
     indexed_chunk_count = int(metadata["indexed_chunk_count"]) if metadata.get("indexed_chunk_count") else 0
     vector_dimensions = int(metadata["vector_dimensions"]) if metadata.get("vector_dimensions") else None
+
+    if settings.vector_backend == "milvus":
+        store = MilvusVectorStore(
+            host=settings.milvus_host,
+            port=settings.milvus_port,
+            collection_name=settings.milvus_collection,
+            dimension=vector_dimensions or 0,
+        )
+        index_exists = store.has_collection() and store.count() > 0
+    else:
+        index_exists = index_path.exists() and indexed_chunk_count > 0
+
     return PersistentIndexStatus(
-        exists=bool(metadata) and index_path.exists() and indexed_chunk_count > 0,
+        exists=bool(metadata) and index_exists,
         document_count=int(document_count),
         chunk_count=int(chunk_count),
         indexed_chunk_count=indexed_chunk_count,
@@ -213,7 +282,6 @@ def search_persistent_vector_index(
     if top_k <= 0:
         raise ValueError("top_k must be positive")
 
-    faiss = _load_faiss()
     index_path = faiss_index_path or settings.faiss_index_path
     status = get_persistent_index_status(database_path=database_path, faiss_index_path=index_path)
     if not status.exists:
@@ -225,14 +293,28 @@ def search_persistent_vector_index(
         )
 
     query_vector = embedding_provider.embed_texts([query])[0]
-    index = faiss.read_index(str(index_path))
-    scores, ids = index.search(_vector_matrix([query_vector]), top_k)
-    chunk_ids = [int(item) for item in ids[0].tolist() if int(item) >= 0]
-    score_by_id = {
-        int(chunk_id): float(score)
-        for chunk_id, score in zip(ids[0].tolist(), scores[0].tolist(), strict=True)
-        if int(chunk_id) >= 0
-    }
+
+    if settings.vector_backend == "milvus":
+        store = MilvusVectorStore(
+            host=settings.milvus_host,
+            port=settings.milvus_port,
+            collection_name=settings.milvus_collection,
+            dimension=len(query_vector),
+        )
+        hits = store.search(query_vector, top_k)
+        chunk_ids = [hit.chunk_id for hit in hits]
+        score_by_id = {hit.chunk_id: hit.score for hit in hits}
+    else:
+        faiss = _load_faiss()
+        index = faiss.read_index(str(index_path))
+        scores, ids = index.search(_vector_matrix([query_vector]), top_k)
+        chunk_ids = [int(item) for item in ids[0].tolist() if int(item) >= 0]
+        score_by_id = {
+            int(chunk_id): float(score)
+            for chunk_id, score in zip(ids[0].tolist(), scores[0].tolist(), strict=True)
+            if int(chunk_id) >= 0
+        }
+
     chunks = _load_chunks_by_ids(chunk_ids, database_path=database_path)
     results = [
         RetrievedChunk(
@@ -357,3 +439,35 @@ def _load_faiss():
             "faiss-cpu is not installed. Install project dependencies before using persistent indexing."
         ) from exc
     return faiss
+
+
+def _build_milvus_index(
+    *,
+    vectors: list[list[float]],
+    searchable_chunks: list[MarkdownChunk],
+    chunk_ids_by_key: dict[tuple[str, int], int],
+    vector_dimensions: int,
+) -> None:
+    store = MilvusVectorStore(
+        host=settings.milvus_host,
+        port=settings.milvus_port,
+        collection_name=settings.milvus_collection,
+        dimension=vector_dimensions,
+    )
+    store.drop_collection()
+    store.ensure_collection()
+
+    ids = [chunk_ids_by_key[(chunk.document_path, chunk.chunk_index)] for chunk in searchable_chunks]
+    metadata = [
+        {
+            "document_path": chunk.document_path,
+            "heading_path": chunk.heading_path or "",
+            "chunk_index": chunk.chunk_index,
+            "start_line": chunk.start_line,
+            "end_line": chunk.end_line,
+            "text": chunk.text[:65535],
+            "text_hash": chunk.text_hash,
+        }
+        for chunk in searchable_chunks
+    ]
+    store.insert(ids, vectors, metadata)

@@ -23,8 +23,8 @@ def test_build_persistent_index_writes_sqlite_and_faiss(tmp_path: Path) -> None:
         "# Garden\n\nTomatoes need soil and sunlight in a small garden.",
         encoding="utf-8",
     )
-    database_path = tmp_path / "self_rag.db"
-    faiss_index_path = tmp_path / "self_rag.index"
+    database_path = tmp_path / "rag_learning.db"
+    faiss_index_path = tmp_path / "rag_learning.index"
 
     result = build_persistent_index(
         root=notes,
@@ -55,8 +55,8 @@ def test_search_persistent_vector_index_returns_stored_chunks(tmp_path: Path) ->
         "# Python\n\nPytest verifies retrieval behavior with enough body text.",
         encoding="utf-8",
     )
-    database_path = tmp_path / "self_rag.db"
-    faiss_index_path = tmp_path / "self_rag.index"
+    database_path = tmp_path / "rag_learning.db"
+    faiss_index_path = tmp_path / "rag_learning.index"
     provider = HashEmbeddingProvider(dimensions=64)
     build_persistent_index(
         root=notes,

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
+from time import perf_counter
 from typing import Protocol
 
 from app.retrieval.schemas import RetrievedChunk
@@ -63,15 +64,19 @@ def rerank(
 
     user_prompt = _USER_PROMPT_TEMPLATE.format(query=query, chunks_text=chunks_text)
 
+    log.info("[reranker] scoring %d chunks against query: %r", len(chunks), query)
+    t0 = perf_counter()
+
     try:
         raw = llm.generate(system_prompt=_SYSTEM_PROMPT, user_prompt=user_prompt)
     except Exception:
         log.warning("Reranker LLM call failed, keeping original order", exc_info=True)
         return chunks[:top_k]
 
+    elapsed = perf_counter() - t0
     scores = _parse_scores(raw, expected_count=len(chunks))
     if not scores:
-        log.warning("Reranker could not parse scores, raw=%r", raw)
+        log.warning("Reranker could not parse scores (%.2fs), raw=%r", elapsed, raw)
         return chunks[:top_k]
 
     scored = []
@@ -81,10 +86,19 @@ def rerank(
 
     scored.sort(key=lambda item: item[1], reverse=True)
 
-    return [
+    result = [
         chunk.model_copy(update={"rank": rank, "score": float(score)})
         for rank, (chunk, score) in enumerate(scored[:top_k], start=1)
     ]
+
+    log.info(
+        "[reranker] done in %.2fs, %d→%d chunks, scores: %s",
+        elapsed,
+        len(chunks),
+        len(result),
+        ", ".join(f"{s}" for _, s in scored[:top_k]),
+    )
+    return result
 
 
 def _parse_scores(raw: str, *, expected_count: int) -> dict[int, int]:
