@@ -77,6 +77,11 @@ class VectorSearchRequest(IndexPreviewRequest):
         default=False,
         description="Search the previously built SQLite + FAISS index instead of scanning files on this request",
     )
+    vector_backend: str | None = Field(
+        default=None,
+        pattern="^(faiss|milvus)$",
+        description="Override vector backend: 'faiss' or 'milvus'",
+    )
 
 
 class IndexBuildRequest(BaseModel):
@@ -88,6 +93,11 @@ class IndexBuildRequest(BaseModel):
         description="Use 'hash' for dependency-free testing or 'bge-m3' for local model embeddings",
     )
     embedding_model_path: Path | None = None
+    vector_backend: str | None = Field(
+        default=None,
+        pattern="^(faiss|milvus)$",
+        description="Override vector backend: 'faiss' or 'milvus'",
+    )
 
 
 class IndexBuildResponse(BaseModel):
@@ -198,6 +208,7 @@ def build_index(request: IndexBuildRequest) -> IndexBuildResponse:
             embedding_provider=provider,
             max_chars=request.max_chars,
             overlap_chars=request.overlap_chars,
+            vector_backend=request.vector_backend,
         )
     except (FileNotFoundError, NotADirectoryError, RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -216,8 +227,10 @@ def build_index(request: IndexBuildRequest) -> IndexBuildResponse:
 
 
 @app.get("/api/index/status")
-def index_status() -> IndexStatusResponse:
-    status = get_persistent_index_status()
+def index_status(
+    vector_backend: str | None = None,
+) -> IndexStatusResponse:
+    status = get_persistent_index_status(vector_backend=vector_backend)
     return IndexStatusResponse(
         exists=status.exists,
         document_count=status.document_count,
@@ -393,6 +406,7 @@ def _run_vector_search(request: VectorSearchRequest) -> VectorSearchResponse:
                 query=request.query,
                 top_k=request.top_k,
                 embedding_provider=provider,
+                vector_backend=request.vector_backend,
             )
         except (RuntimeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -428,7 +442,7 @@ def _run_vector_search(request: VectorSearchRequest) -> VectorSearchResponse:
 
 def _run_keyword_search(request: VectorSearchRequest) -> KeywordSearchResponse:
     if request.use_persistent_index:
-        status = get_persistent_index_status()
+        status = get_persistent_index_status(vector_backend=request.vector_backend)
         chunks = load_persistent_chunks()
         if not chunks:
             raise HTTPException(status_code=400, detail="Persistent index does not contain chunks. Build it first.")
@@ -557,6 +571,11 @@ class EvalRequest(BaseModel):
     embedding_model_path: Path | None = None
     enable_multi_query: bool = False
     enable_reranker: bool = False
+    vector_backend: str | None = Field(
+        default=None,
+        pattern="^(faiss|milvus)$",
+        description="Override vector backend: 'faiss' or 'milvus'",
+    )
 
 
 @app.post("/api/eval")
@@ -570,6 +589,7 @@ def run_evaluation(request: EvalRequest) -> EvalReport:
             top_k=request.top_k,
             embedding_provider=request.embedding_provider,
             embedding_model_path=request.embedding_model_path,
+            vector_backend=request.vector_backend,
         )
         retrieval = _run_retrieval(mode=request.mode, request=search_request)
         return retrieval.results

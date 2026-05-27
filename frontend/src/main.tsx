@@ -75,6 +75,7 @@ type RetrievalRun = {
   usePersistentIndex: boolean;
   enableMultiQuery: boolean;
   enableReranker: boolean;
+  vectorBackend: string;
 };
 
 const MIN_DISPLAY_SCORE = 0.5;
@@ -98,6 +99,7 @@ function App() {
   const [usePersistentIndex, setUsePersistentIndex] = useState(true);
   const [enableMultiQuery, setEnableMultiQuery] = useState(false);
   const [enableReranker, setEnableReranker] = useState(false);
+  const [vectorBackend, setVectorBackend] = useState("faiss");
   const [state, setState] = useState<RunState>({ status: "idle" });
   const isLoading = state.status === "loading";
   const statusLabel =
@@ -137,6 +139,7 @@ function App() {
       max_chars: maxChars,
       overlap_chars: 160,
       embedding_provider: provider,
+      vector_backend: vectorBackend,
     });
     setState(
       result.ok
@@ -164,6 +167,7 @@ function App() {
         overlap_chars: 160,
         embedding_provider: provider,
         use_persistent_index: usePersistentIndex,
+        vector_backend: vectorBackend,
       },
     );
     setState(
@@ -178,6 +182,7 @@ function App() {
               usePersistentIndex,
               enableMultiQuery,
               enableReranker,
+              vectorBackend,
             },
           }
         : { status: "error", message: result.error },
@@ -207,6 +212,7 @@ function App() {
       use_persistent_index: usePersistentIndex,
       enable_multi_query: enableMultiQuery,
       enable_reranker: enableReranker,
+      vector_backend: vectorBackend,
     });
     setState(
       result.ok
@@ -220,6 +226,7 @@ function App() {
               usePersistentIndex,
               enableMultiQuery,
               enableReranker,
+              vectorBackend,
             },
           }
         : { status: "error", message: result.error },
@@ -315,6 +322,16 @@ function App() {
               >
                 <option value="hash">hash</option>
                 <option value="bge-m3">bge-m3</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>向量后端</span>
+              <select
+                value={vectorBackend}
+                onChange={(event) => setVectorBackend(event.target.value)}
+              >
+                <option value="faiss">FAISS（本地文件）</option>
+                <option value="milvus">Milvus（远程）</option>
               </select>
             </label>
             <label className="field">
@@ -575,6 +592,10 @@ function RetrievalTrace({
             </b>
           </span>
           <span>
+            向量后端：
+            <b>{run.vectorBackend === "milvus" ? "Milvus" : "FAISS"}</b>
+          </span>
+          <span>
             问题：<b>{run.query}</b>
           </span>
           <span>
@@ -698,6 +719,10 @@ function AnswerPanel({
           </span>
           <span>
             Reranker：<b>{run.enableReranker ? "开启" : "关闭"}</b>
+          </span>
+          <span>
+            向量后端：
+            <b>{run.vectorBackend === "milvus" ? "Milvus" : "FAISS"}</b>
           </span>
         </div>
         <div className="answer-text">{data.answer}</div>

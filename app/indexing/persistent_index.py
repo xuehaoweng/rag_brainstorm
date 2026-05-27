@@ -58,6 +58,7 @@ def build_persistent_index(
     overlap_chars: int,
     database_path: Path | None = None,
     faiss_index_path: Path | None = None,
+    vector_backend: str | None = None,
 ) -> PersistentIndexBuildResult:
     init_db(database_path)
     documents = scan_markdown_folder(root)
@@ -69,6 +70,7 @@ def build_persistent_index(
         database_path=database_path,
         faiss_index_path=faiss_index_path,
         root=str(root),
+        vector_backend=vector_backend,
     )
 
 
@@ -80,6 +82,7 @@ def build_persistent_index_from_sources(
     overlap_chars: int,
     database_path: Path | None = None,
     faiss_index_path: Path | None = None,
+    vector_backend: str | None = None,
 ) -> PersistentIndexBuildResult:
     """Build index from multiple document sources (web, lark, local files, etc)."""
     init_db(database_path)
@@ -94,6 +97,7 @@ def build_persistent_index_from_sources(
         database_path=database_path,
         faiss_index_path=faiss_index_path,
         root="multi-source",
+        vector_backend=vector_backend,
     )
 
 
@@ -106,6 +110,7 @@ def _build_index_from_documents(
     database_path: Path | None,
     faiss_index_path: Path | None,
     root: str,
+    vector_backend: str | None = None,
 ) -> PersistentIndexBuildResult:
     """Core index building logic shared by all sources."""
     """Core index building logic shared by all sources."""
@@ -202,7 +207,8 @@ def _build_index_from_documents(
         )
 
     if vectors:
-        if settings.vector_backend == "milvus":
+        backend = vector_backend or settings.vector_backend
+        if backend == "milvus":
             _build_milvus_index(
                 vectors=vectors,
                 searchable_chunks=searchable_chunks,
@@ -235,6 +241,7 @@ def get_persistent_index_status(
     *,
     database_path: Path | None = None,
     faiss_index_path: Path | None = None,
+    vector_backend: str | None = None,
 ) -> PersistentIndexStatus:
     init_db(database_path)
     index_path = faiss_index_path or settings.faiss_index_path
@@ -246,7 +253,8 @@ def get_persistent_index_status(
     indexed_chunk_count = int(metadata["indexed_chunk_count"]) if metadata.get("indexed_chunk_count") else 0
     vector_dimensions = int(metadata["vector_dimensions"]) if metadata.get("vector_dimensions") else None
 
-    if settings.vector_backend == "milvus":
+    backend = vector_backend or settings.vector_backend
+    if backend == "milvus":
         store = MilvusVectorStore(
             host=settings.milvus_host,
             port=settings.milvus_port,
@@ -278,12 +286,13 @@ def search_persistent_vector_index(
     embedding_provider: EmbeddingProvider,
     database_path: Path | None = None,
     faiss_index_path: Path | None = None,
+    vector_backend: str | None = None,
 ) -> PersistentVectorSearchResult:
     if top_k <= 0:
         raise ValueError("top_k must be positive")
 
     index_path = faiss_index_path or settings.faiss_index_path
-    status = get_persistent_index_status(database_path=database_path, faiss_index_path=index_path)
+    status = get_persistent_index_status(database_path=database_path, faiss_index_path=index_path, vector_backend=vector_backend)
     if not status.exists:
         raise ValueError("Persistent index does not exist. Build it first with /api/index/build.")
     if status.provider != embedding_provider.name:
@@ -294,7 +303,8 @@ def search_persistent_vector_index(
 
     query_vector = embedding_provider.embed_texts([query])[0]
 
-    if settings.vector_backend == "milvus":
+    backend = vector_backend or settings.vector_backend
+    if backend == "milvus":
         store = MilvusVectorStore(
             host=settings.milvus_host,
             port=settings.milvus_port,
