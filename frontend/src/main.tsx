@@ -64,6 +64,7 @@ type AnswerResponse = {
   mode: RetrievalMode;
   model: string;
   provider: string;
+  rewritten_queries?: string[];
 };
 
 type RetrievalMode = "hybrid" | "vector" | "keyword";
@@ -72,6 +73,8 @@ type RetrievalRun = {
   query: string;
   root: string;
   usePersistentIndex: boolean;
+  enableMultiQuery: boolean;
+  enableReranker: boolean;
 };
 
 const MIN_DISPLAY_SCORE = 0.5;
@@ -93,6 +96,8 @@ function App() {
   const [topK, setTopK] = useState(5);
   const [maxChars, setMaxChars] = useState(1800);
   const [usePersistentIndex, setUsePersistentIndex] = useState(true);
+  const [enableMultiQuery, setEnableMultiQuery] = useState(false);
+  const [enableReranker, setEnableReranker] = useState(false);
   const [state, setState] = useState<RunState>({ status: "idle" });
   const isLoading = state.status === "loading";
   const statusLabel =
@@ -166,16 +171,30 @@ function App() {
         ? {
             status: "vector",
             data: result.data,
-            run: { mode, query, root, usePersistentIndex },
+            run: {
+              mode,
+              query,
+              root,
+              usePersistentIndex,
+              enableMultiQuery,
+              enableReranker,
+            },
           }
         : { status: "error", message: result.error },
     );
   }
 
   async function generateAnswer() {
+    const needsEmbedding = mode !== "keyword";
+    const hasLLM = enableMultiQuery || enableReranker;
     setState({
       status: "loading",
-      label: "正在检索证据并调用大模型生成带引用的回答...",
+      label:
+        hasLLM && needsEmbedding && provider === "bge-m3"
+          ? "正在加载 bge-m3，检索 + LLM 精排 / 改写..."
+          : hasLLM
+            ? "正在检索证据并调用 LLM 精排 / 改写..."
+            : "正在检索证据并调用大模型生成带引用的回答...",
     });
     const result = await postJson<AnswerResponse>("/api/answer", {
       root,
@@ -186,13 +205,22 @@ function App() {
       overlap_chars: 160,
       embedding_provider: provider,
       use_persistent_index: usePersistentIndex,
+      enable_multi_query: enableMultiQuery,
+      enable_reranker: enableReranker,
     });
     setState(
       result.ok
         ? {
             status: "answer",
             data: result.data,
-            run: { mode, query, root, usePersistentIndex },
+            run: {
+              mode,
+              query,
+              root,
+              usePersistentIndex,
+              enableMultiQuery,
+              enableReranker,
+            },
           }
         : { status: "error", message: result.error },
     );
@@ -320,6 +348,30 @@ function App() {
                   }
                 />
                 使用 SQLite + FAISS 持久化索引
+              </label>
+            </div>
+            <div className="field checkbox-field">
+              <span>Query 改写</span>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={enableMultiQuery}
+                  onChange={(event) =>
+                    setEnableMultiQuery(event.target.checked)
+                  }
+                />
+                Multi-Query 改写（LLM 扩展查询角度）
+              </label>
+            </div>
+            <div className="field checkbox-field">
+              <span>精排</span>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={enableReranker}
+                  onChange={(event) => setEnableReranker(event.target.checked)}
+                />
+                Reranker 精排（LLM 二次评分排序）
               </label>
             </div>
           </div>
@@ -641,8 +693,26 @@ function AnswerPanel({
               {run.usePersistentIndex ? "SQLite + FAISS" : "按请求实时扫描"}
             </b>
           </span>
+          <span>
+            Multi-Query：<b>{run.enableMultiQuery ? "开启" : "关闭"}</b>
+          </span>
+          <span>
+            Reranker：<b>{run.enableReranker ? "开启" : "关闭"}</b>
+          </span>
         </div>
         <div className="answer-text">{data.answer}</div>
+        {data.rewritten_queries && data.rewritten_queries.length > 0 ? (
+          <div className="debug-strip" style={{ marginTop: "0.75rem" }}>
+            <span>改写查询：</span>
+            {data.rewritten_queries.map((q, i) => (
+              <span key={i}>
+                <b>
+                  {i + 1}. {q}
+                </b>
+              </span>
+            ))}
+          </div>
+        ) : null}
       </section>
 
       <section className="trace-step">
